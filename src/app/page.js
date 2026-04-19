@@ -114,14 +114,10 @@ function StatCard({ label, value, accent, icon }) {
 }
 
 /* ── input ── */
-function FilterInput({ placeholder, value, onChange, width = 130 }) {
+function FilterInput({ placeholder, value, onChange }) {
   return (
     <input
-      style={{
-        background: 'white', border: '1px solid #e2e8f0', padding: '8px 12px',
-        borderRadius: '8px', fontSize: '13px', color: '#374151', width,
-        boxShadow: '0 1px 2px rgba(0,0,0,0.04)', outline: 'none',
-      }}
+      className="flex-1 sm:flex-none border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-slate-700 bg-white shadow-sm outline-none w-full sm:w-auto"
       placeholder={placeholder}
       value={value}
       onChange={onChange}
@@ -278,89 +274,64 @@ export default function TimetablePage() {
       <main style={{ maxWidth: '1600px', margin: '0 auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
 
         {/* ── Toolbar ── */}
-        <div style={{
-          background: 'white', borderRadius: '12px',
-          border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-          padding: '14px 16px', display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center',
-        }}>
-
-          {/* Load saved */}
-          <button
-            onClick={loadList}
-            style={{
-              background: 'white', border: '1px solid #e2e8f0', color: '#374151',
-              padding: '7px 13px', borderRadius: '8px', fontSize: '13px', fontWeight: '500',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-            }}
-          >
-            <IconDownload />
-            Load Saved
-          </button>
-
-          {timetableList.length > 0 && (
-            <select
-              value={timetableId}
-              onChange={e => { setTimetableId(e.target.value); loadTimetable(e.target.value); }}
-              style={{
-                background: 'white', border: '1px solid #e2e8f0', color: '#374151',
-                padding: '7px 12px', borderRadius: '8px', fontSize: '13px',
-                cursor: 'pointer', boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                minWidth: '240px', maxWidth: '320px',
-              }}
-            >
-              <option value="">— Select saved schedule —</option>
-              {timetableList.map(t => (
-                <option key={t._id} value={t._id}>
-                  {new Date(t.generatedAt).toLocaleString()} · {t.hardViolations} violations
-                </option>
-              ))}
-            </select>
-          )}
-
-          {/* Divider */}
-          <div style={{ width: '1px', height: '28px', background: '#e2e8f0', flexShrink: 0 }} />
-
-          {/* Filter inputs */}
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-            <FilterInput placeholder="Program (BAI…)" value={filter.program}     onChange={e => setFilter({ ...filter, program: e.target.value })}     width={134} />
-            <FilterInput placeholder="Instructor name" value={filter.instructor}  onChange={e => setFilter({ ...filter, instructor: e.target.value })} width={158} />
-            <FilterInput placeholder="Room (CS LH1)"  value={filter.room}        onChange={e => setFilter({ ...filter, room: e.target.value })}       width={120} />
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-3 sm:p-4 flex flex-col md:flex-row flex-wrap gap-3 sm:gap-4 md:items-center">
+          
+          {/* Load/Select Group */}
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full md:w-auto">
             <button
-              onClick={() => loadTimetable(timetableId, filter)}
-              style={{
-                background: '#0f172a', color: 'white', border: 'none',
-                padding: '7px 14px', borderRadius: '8px', fontSize: '13px',
-                fontWeight: '500', cursor: 'pointer',
-                display: 'flex', alignItems: 'center', gap: '6px',
-              }}
+              onClick={loadList}
+              className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[13px] font-medium cursor-pointer flex items-center justify-center gap-2 shadow-sm w-full sm:w-auto"
             >
-              <IconFilter />Apply
+              <IconDownload />
+              Load Saved
             </button>
-            <button
-              onClick={() => { const f = { program: '', instructor: '', room: '' }; setFilter(f); loadTimetable(timetableId, f); }}
-              style={{
-                background: 'white', color: '#64748b',
-                border: '1px solid #e2e8f0', padding: '7px 13px',
-                borderRadius: '8px', fontSize: '13px', cursor: 'pointer',
-              }}
-            >Clear</button>
+
+            {timetableList.length > 0 && (
+              <select
+                value={timetableId}
+                onChange={e => { setTimetableId(e.target.value); loadTimetable(e.target.value); }}
+                className="bg-white border border-slate-200 text-slate-700 px-3 py-2 rounded-lg text-[13px] cursor-pointer shadow-sm w-full sm:w-auto sm:min-w-[240px] sm:max-w-[320px]"
+              >
+                <option value="">— Select saved schedule —</option>
+                {timetableList.map(t => (
+                  <option key={t._id} value={t._id}>
+                    {new Date(t.generatedAt).toLocaleString()} · {t.hardViolations} violations
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Divider - Only visible on md+ screens */}
+          <div className="hidden md:block w-[1px] h-7 bg-slate-200 shrink-0" />
+
+          {/* Filter inputs Group */}
+          <div className="flex flex-col sm:flex-row gap-2 flex-wrap items-stretch sm:items-center w-full md:w-auto">
+            <FilterInput placeholder="Program (BAI…)" value={filter.program}     onChange={e => setFilter({ ...filter, program: e.target.value })} />
+            <FilterInput placeholder="Instructor name" value={filter.instructor}  onChange={e => setFilter({ ...filter, instructor: e.target.value })} />
+            <FilterInput placeholder="Room (CS LH1)"  value={filter.room}        onChange={e => setFilter({ ...filter, room: e.target.value })} />
+            
+            <div className="flex gap-2 w-full sm:w-auto mt-1 sm:mt-0">
+              <button
+                onClick={() => loadTimetable(timetableId, filter)}
+                className="bg-slate-900 text-white border-none px-3.5 py-2 rounded-lg text-[13px] font-medium cursor-pointer flex items-center justify-center gap-1.5 flex-1 sm:flex-none"
+              >
+                <IconFilter />Apply
+              </button>
+              <button
+                onClick={() => { const f = { program: '', instructor: '', room: '' }; setFilter(f); loadTimetable(timetableId, f); }}
+                className="bg-white text-slate-500 border border-slate-200 px-3 py-2 rounded-lg text-[13px] cursor-pointer flex-1 sm:flex-none"
+              >Clear</button>
+            </div>
           </div>
 
           {/* View toggle — pushed to the right */}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '2px', padding: '3px', background: '#f1f5f9', borderRadius: '8px' }}>
+          <div className="md:ml-auto flex gap-0.5 p-1 bg-slate-100 rounded-lg self-start sm:self-auto w-full sm:w-auto mt-1 md:mt-0">
             {[['grid', 'Grid View'], ['list', 'List View']].map(([v, label]) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
-                style={{
-                  padding: '5px 14px', borderRadius: '6px', fontSize: '12px',
-                  fontWeight: '500', border: 'none', cursor: 'pointer',
-                  transition: 'all 0.12s',
-                  background: view === v ? 'white' : 'transparent',
-                  color: view === v ? '#0f172a' : '#64748b',
-                  boxShadow: view === v ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
-                }}
+                className={`flex-1 sm:flex-none px-3.5 py-1.5 rounded-md text-[12px] font-medium border-none cursor-pointer transition-all duration-150 ${view === v ? 'bg-white text-slate-900 shadow-sm' : 'bg-transparent text-slate-500'}`}
               >{label}</button>
             ))}
           </div>
