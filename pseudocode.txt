@@ -1,0 +1,333 @@
+ALGORITHM: University Timetable Scheduling
+          (Greedy Construction + Progressive Constraint Relaxation)
+
+===============================================================================
+INPUT
+===============================================================================
+  S = set of N sections, each with:
+      courseCode, courseTitle, sectionLabel, program, instructorName,
+      creditHours, isLab, isElective, sectionGroup, yearLevel, enrollment
+
+  R = set of M rooms, each with:
+      name, capacity, faculty, allocation
+
+===============================================================================
+CONSTANTS
+===============================================================================
+  DAYS         = {Mon, Tue, Wed, Thu, Fri}              // 5 days
+  SLOTS        = {0,1,2,3,4,5,6,7}                      // 8 per day
+  SLOT_TIMES   = {08:00, 09:00, 10:30, 11:30, 12:30,    // morning block
+                  14:30, 15:30, 16:30}                   // afternoon block
+  LUNCH_BREAK  = between slot 4 (12:30) and slot 5 (14:30)
+  CONSEC_PAIRS = (removed — replaced by MIN_GAP)
+  MIN_GAP      = 2   // any two teaching slots for same instructor on
+                     // same day must differ by > MIN_GAP (i.e. ≥ 3 slots apart)
+
+===============================================================================
+HARD CONSTRAINTS
+===============================================================================
+  H1: Room Uniqueness
+      ∀ two assigned sections a,b:
+        if a.room = b.room AND a.slot = b.slot → VIOLATION
+
+  H2: Instructor Uniqueness
+      ∀ two assigned sections a,b:
+        if a.instructor = b.instructor AND a.slot = b.slot → VIOLATION
+        (skip if instructor = "TBA" or ends with "(TBD)" or "(FORCE)")
+
+  H3: Program-Year Conflict
+      ∀ two assigned sections a,b at same time slot:
+        SKIP if a.courseCode = b.courseCode          // parallel sections OK
+        SKIP if a.program = null OR b.program = null // open elective
+        SKIP if no overlapping atomic programs       // disjoint programs
+        SKIP if a.yearLevel ≠ b.yearLevel (both > 0) // different years
+        OTHERWISE → VIOLATION
+
+  H4: Room Capacity
+      ∀ assigned section a:
+        if a.enrollment > a.room.capacity → VIOLATION
+
+  H5: Instructor Minimum Gap (per day)
+      ∀ instructor I, ∀ day d:
+        let hours = set of all slot indices I teaches on day d
+        ∀ pairs (h1, h2) in hours:
+          if |h1 − h2| ≤ MIN_GAP → VIOLATION
+      Example: MIN_GAP = 2
+        slot 0 and slot 2 → diff = 2 ≤ 2 → VIOLATION (too close)
+        slot 0 and slot 3 → diff = 3 > 2 → OK
+        slot 5 and slot 7 → diff = 2 ≤ 2 → VIOLATION
+
+===============================================================================
+HELPER FUNCTIONS
+===============================================================================
+
+FUNCTION splitPrograms(p):
+    // "BAI+BCE+BCS" → {"BAI", "BCE", "BCS"}
+    return split p by '+' and ',' → trim each → return set
+
+FUNCTION programsOverlap(p1, p2):
+    return splitPrograms(p1) ∩ splitPrograms(p2) ≠ ∅
+
+FUNCTION getSlotCombinations(creditHours, isLab):
+    combos = []
+    IF isLab:
+        // 3 consecutive slots on ONE day, never crossing lunch
+        validStarts = {0, 1, 2, 5}
+        FOR each day d in DAYS:
+            FOR each start h in validStarts:
+                IF h + 2 ≤ 7:
+                    combos.add([(d,h), (d,h+1), (d,h+2)])
+
+    ELSE IF creditHours = 3:
+        // All C(5,3) = 10 day-triples × 8 hours
+        dayTriples = all combinations of 3 days from {0..4}
+        SORT dayTriples so MWF = (0,2,4) comes first
+        FOR each hour h in 0..7:
+            FOR each triple (a,b,c) in dayTriples:
+                combos.add([(a,h), (b,h), (c,h)])
+
+    ELSE IF creditHours = 2:
+        // All C(5,2) = 10 day-pairs × 8 hours
+        dayPairs = all combinations of 2 days from {0..4}
+        SORT dayPairs so TTh = (1,3) comes first
+        FOR each hour h in 0..7:
+            FOR each pair (a,b) in dayPairs:
+                combos.add([(a,h), (b,h)])
+
+    ELSE IF creditHours = 1:
+        FOR each day d in DAYS:
+            FOR each hour h in SLOTS:
+                combos.add([(d,h)])
+
+    RETURN combos
+
+FUNCTION wouldViolateInstructorGap(instructor, newSlots, assignments, minGap):
+    IF instructor is null or "TBA": return false
+    FOR each day d that appears in newSlots:
+        hoursOnDay = {hours from newSlots on day d}
+        FOR each assignment a in assignments:
+            IF a.instructor = instructor:
+                FOR each slot s in a.slots:
+                    IF s.day = d: hoursOnDay.add(s.hour)
+        SORT hoursOnDay
+        FOR i = 1 to |hoursOnDay|-1:
+            IF hoursOnDay[i] − hoursOnDay[i-1] ≤ minGap:
+                return true       // two classes too close on same day
+    RETURN false
+
+FUNCTION checkConflicts(proposed, existing, flags):
+    violations = []
+    // H4 check
+    IF proposed.enrollment > proposed.roomCapacity:
+        violations.add("H4")
+
+    FOR each assignment ex in existing:
+        FOR each slot ps in proposed.slots:
+            FOR each slot es in ex.slots:
+                IF ps.day ≠ es.day OR ps.hour ≠ es.hour: continue
+
+                // H1 — room
+                IF ex.room = proposed.room: violations.add("H1")
+
+                // H2 — instructor (unless skipH2 flag)
+                IF NOT flags.skipH2:
+                    IF both have real instructors AND same name:
+                        violations.add("H2")
+
+                // H3 — program (unless skipH3 flag)
+                IF NOT flags.skipH3:
+                    SKIP if same courseCode (parallel sections)
+                    SKIP if either program is null
+                    SKIP if no program overlap
+                    SKIP if different yearLevel (both > 0)
+                    IF flags.relaxH3Electives AND either is elective: SKIP
+                    IF flags.relaxH3Groups AND different sectionGroup: SKIP
+                    violations.add("H3")
+
+    RETURN violations
+
+FUNCTION sortByConstraintDensity(sections):
+    SORT sections by:
+        1. Has real instructor (not TBA) → FIRST
+        2. Not an elective → FIRST (harder to place)
+        3. Higher credit hours → FIRST
+        4. More program codes → FIRST (more constrained)
+    RETURN sorted list
+
+FUNCTION sortRooms(rooms, section):
+    SORT rooms by:
+        1. Room allocated to section's program → FIRST
+        2. Capacity closest to (but ≥) enrollment → FIRST
+    RETURN sorted list
+
+FUNCTION tryPlace(section, rooms, assignments, flags):
+    orderedRooms = sortRooms(rooms, section)
+    combos = getSlotCombinations(section.creditHours, section.isLab)
+
+    FOR each combo in combos:
+        IF flags.enforceGap:
+            IF wouldViolateInstructorGap(instructor, combo, assignments, MIN_GAP):
+                continue    // skip — slots too close for this instructor
+        FOR each room in orderedRooms:
+            IF room.capacity < section.enrollment: continue
+            proposed = build assignment from (section, room, combo)
+            IF checkConflicts(proposed, assignments, flags) is empty:
+                RETURN proposed     // ✓ first valid placement wins
+    RETURN null  // could not place
+
+===============================================================================
+MAIN ALGORITHM: runScheduler(S, R)
+===============================================================================
+
+STEP 0: Preparation
+    Sort S by constraint density (most constrained first)
+
+STEP 1: PHASE 1 — Strict Greedy Construction
+    // All hard constraints enforced, no relaxation
+    assignments = []
+    unassigned  = []
+    FOR each section s in sorted S:
+        result = tryPlace(s, R, assignments, flags={})
+        IF result ≠ null:
+            assignments.add(result)
+        ELSE:
+            unassigned.add(s)
+    LOG "Phase 1: |assignments| placed, |unassigned| remain"
+
+STEP 2: PHASE 2 — Repair (retry up to 5 passes)
+    // Earlier placements may have opened up new valid combos
+    REPEAT up to 5 times while unassigned shrinks:
+        nextUnassigned = []
+        FOR each section s in unassigned:
+            result = tryPlace(s, R, assignments, flags={})
+            IF result ≠ null:
+                assignments.add(result)
+            ELSE:
+                nextUnassigned.add(s)
+        IF |nextUnassigned| = |unassigned|: BREAK  // no progress
+        unassigned = nextUnassigned
+    LOG "Phase 2: |assignments| placed, |unassigned| remain"
+
+STEP 3: PHASE 3 — Relax H3 for Electives
+    // Elective courses serve self-selecting students
+    // They can't realistically double-book
+    nextUnassigned = []
+    FOR each section s in unassigned:
+        result = tryPlace(s, R, assignments,
+                    flags={relaxH3Electives: true})
+        IF result ≠ null:
+            assignments.add(result)
+        ELSE:
+            nextUnassigned.add(s)
+    unassigned = nextUnassigned
+    LOG "Phase 3: |assignments| placed, |unassigned| remain"
+
+STEP 4: PHASE 4 — Relax H3 for Section Groups
+    // Section A and Section B serve different student sub-groups
+    // (e.g., CVE-A and CVE-B are different cohorts)
+    nextUnassigned = []
+    FOR each section s in unassigned:
+        result = tryPlace(s, R, assignments,
+                    flags={relaxH3Electives: true,
+                           relaxH3Groups: true})
+        IF result ≠ null:
+            assignments.add(result)
+        ELSE:
+            nextUnassigned.add(s)
+    unassigned = nextUnassigned
+    LOG "Phase 4: |assignments| placed, |unassigned| remain"
+
+STEP 5: PHASE 5 — Soft Lab Placement (skip H2 + consecutive limit)
+    // For labs whose instructor is physically overloaded
+    // Schedule with "instructor TBD" — needs manual reassignment
+    nextUnassigned = []
+    FOR each section s in unassigned:
+        result = tryPlace(s, R, assignments,
+                    flags={skipH2: true,
+                           relaxH3Electives: true,
+                           relaxH3Groups: true,
+                           enforceGap: false})    // drop gap constraint for labs
+        IF result ≠ null:
+            result.instructor = result.instructor + " (TBD)"
+            assignments.add(result)
+        ELSE:
+            nextUnassigned.add(s)
+    unassigned = nextUnassigned
+    LOG "Phase 5: |assignments| placed, |unassigned| remain"
+
+STEP 6: PHASE 6 — Force Placement (skip H2 + H3) — last resort
+    // Only reaches here for truly impossible cases
+    nextUnassigned = []
+    FOR each section s in unassigned:
+        result = tryPlace(s, R, assignments,
+                    flags={skipH2: true,
+                           skipH3: true,
+                           enforceGap: false})     // last resort
+        IF result ≠ null:
+            result.instructor = result.instructor + " (FORCE)"
+            assignments.add(result)
+        ELSE:
+            nextUnassigned.add(s)
+    unassigned = nextUnassigned
+    LOG "Phase 6: |assignments| placed, |unassigned| remain"
+
+STEP 7: Mark any remaining as UNSCHEDULED
+    FOR each section s still in unassigned:
+        assignments.add(s with room="UNSCHEDULED", slots=[])
+
+STEP 8: Count hard violations in final schedule
+    hardViolations = countHardViolations(assignments where room ≠ "UNSCHEDULED")
+
+RETURN {assignments, unassigned, hardViolations}
+
+===============================================================================
+COUNTING HARD VIOLATIONS: countHardViolations(A)
+===============================================================================
+    count = 0
+    FOR each pair (a, b) in A where a ≠ b:
+        FOR each slot pair (as, bs) where as.day = bs.day AND as.hour = bs.hour:
+            IF a.room = b.room:                                count++  // H1
+            IF a.instructor = b.instructor (both real):        count++  // H2
+            IF program-year overlap (same rules as H3 above):  count++  // H3
+    RETURN count
+
+===============================================================================
+COMPLEXITY ANALYSIS
+===============================================================================
+  Let N = |sections|, M = |rooms|, C = max |combos| per section
+
+  Phase 1: O(N × C × M × N) = O(N² × C × M)
+           For each section: try C combos × M rooms × check N existing
+           C ≤ 80 (3-CH), M = 41, N = 411
+           Worst case: ~553 million ops (runs in < 2 seconds)
+
+  Phase 2: O(5 × U × C × M × N)  where U = unassigned count
+
+  Phases 3-6: Same as Phase 1 but with fewer sections (U << N)
+
+  countHardViolations: O(N² × S²) where S = max slots per section (3)
+
+  TOTAL: O(N² × C × M) — polynomial time, tractable for N ≈ 500
+
+===============================================================================
+ASSUMPTIONS
+===============================================================================
+  A1.  5-day week (Mon–Fri)
+  A2.  8 slots/day: 08:00, 09:00, 10:30, 11:30, 12:30, 14:30, 15:30, 16:30
+  A3.  Lunch break between slot 4 (12:30) and slot 5 (14:30): resets
+       consecutive count, labs cannot span across it
+  A4.  3-CH course = 3 days × 1 hour each (prefer MWF pattern)
+  A5.  2-CH course = 2 days × 1 hour each (prefer TTh pattern)
+  A6.  1-CH lab = 3 consecutive hours on 1 day
+  A7.  Default enrollment = 40 if not specified
+  A8.  ES LH4 excluded from scheduling (quiz hall)
+  A9.  Elective courses don't trigger program conflicts (H3)
+  A10. Parallel sections (A vs B) serve different student cohorts
+  A11. Same course code → parallel sections can overlap in time
+  A12. Year level extracted from course number (2nd digit)
+  A13. Instructors marked TBA/TBD/FORCE are exempt from H2
+  A14. Instructor min gap = 2 slots: any two classes for the same
+       instructor on the same day must be ≥ 3 slot indices apart.
+       e.g. 08:00 (slot 0) and 10:30 (slot 2) → diff 2 → TOO CLOSE
+            08:00 (slot 0) and 11:30 (slot 3) → diff 3 → OK
+  A15. Departmental room allocation is a soft preference, not hard
