@@ -1,54 +1,34 @@
 /**
  * ============================================================
  *  TIMETABLE SCHEDULING ALGORITHM
- *  Algorithm: Greedy Construction + Progressive Constraint Relaxation
+ *  Greedy Construction + Backtracking Swap Repair
  * ============================================================
  *
- * PHASE 1 — Greedy Construction (Strict)
+ * PHASE 1 — Greedy Construction (strict)
  *   Sort sections by constraint density (most constrained first).
- *   For each section, try every (room, day, slot-combo) in priority order.
- *   Accept first assignment that violates zero HARD constraints.
+ *   Larger enrollment classes go first to claim big rooms.
+ *   For each section, try every (room, slot-combo) in priority order.
+ *   Day combos are load-balanced to avoid MWF congestion.
  *
- * PHASE 2 — Repair (retry unassigned — earlier phases may free combos)
+ * PHASE 2 — Backtracking Swap Repair
+ *   For each unassigned section U, find a placed section V that
+ *   *conflicts* with U. Remove V, place U, then re-place V
+ *   elsewhere. If V can't be re-placed, undo and try next V.
  *
  * PHASE 3 — Relax H3 for Electives
- *   Elective courses don't block each other via H3.
- *   Students self-select electives so they can't double-book.
- *
  * PHASE 4 — Relax H3 for Section Groups
- *   Section A and Section B serve different student cohorts.
- *   Allow H3 overlap when sections belong to different groups.
- *
- * PHASE 5 — Soft Lab Placement (skip H2)
- *   Labs whose instructor is physically overloaded get scheduled
- *   with instructor set to TBD (skip H2). H1 & H3 still enforced.
- *
- * PHASE 6 — Force Place (skip H2 + H3) — last resort
+ * PHASE 5 — Soft Lab (skip H2, mark TBD)
+ * PHASE 6 — Force Place (skip H2+H3, mark FORCE) — last resort
  *
  * HARD CONSTRAINTS
- *   H1 — No two sections share same room + time slot
- *   H2 — No instructor teaches two sections at same time slot
- *   H3 — No program+year has two lectures at same time slot
- *   H4 — Room capacity >= section enrollment
- *   H5 — Instructor Minimum Gap: any two teaching slots for the same
- *         instructor on the same day must differ by at least MIN_GAP+1
- *         slots (default MIN_GAP = 2 → slots must be 3+ apart).
- *         Example: slot 0 and slot 2 (diff=2) → VIOLATION
- *                  slot 0 and slot 3 (diff=3) → OK
- *
- * ASSUMPTIONS (matching real institution timetable, Spring 2025)
- *   • 5-day week: Mon–Fri
- *   • 8 slots per day: 08:00, 09:00, 10:30, 11:30, 12:30,
- *     then LUNCH BREAK, then 14:30, 15:30, 16:30
- *   • 3-CH = 3 days x 1 slot (prefer MWF)
- *   • 2-CH = 2 days x 1 slot (prefer TTh)
- *   • 1-CH lab = 3 consecutive slots on ONE day, not crossing lunch
- *   • Default enrollment = 40
- *   • ES LH4 excluded (quiz hall)
- *   • Electives don't trigger H3
- *   • Different section groups (A vs B) can share time in H3
- *   • Instructor min gap = 2 slots (e.g. slot 0 & slot 3 OK,
- *     slot 0 & slot 2 REJECTED — too close)
+ *   H1 — Room uniqueness (same room+slot)
+ *   H2 — Instructor uniqueness (same instructor+slot)
+ *   H3 — Program-year conflict (same program+year+slot)
+ *   H4 — Room capacity >= enrollment
+ *   H5 — Instructor gap: between *different sections* on the same
+ *         day, the gap must be > MIN_GAP slots. Internal slots of
+ *         one multi-slot section (e.g. lab) are exempt. The lunch
+ *         break between slot 4 and 5 counts as an extra gap of 1.
  * ============================================================
  */
 
@@ -69,11 +49,27 @@ export const HOUR_LABEL = [
   '16:30–17:20',   // 7
 ];
 
-export const BREAK_AFTER_SLOT = 4;
+export const BREAK_AFTER_SLOT = 4;  // lunch gap lives between slot 4 and 5
 
-// ── Slot Combinations ──────────────────────────────────────────────────────
+const DEFAULT_MIN_GAP = 2;
 
-function getSlotCombinations(creditHours, isLab) {
+// ── Day-load tracker (keeps schedule balanced across days) ────────────────
+
+function createDayLoad() {
+  return [0, 0, 0, 0, 0]; // Mon–Fri
+}
+
+function recordLoad(dayLoad, combo) {
+  for (const s of combo) dayLoad[s.day]++;
+}
+
+function unrecordLoad(dayLoad, combo) {
+  for (const s of combo) dayLoad[s.day]--;
+}
+
+// ── Slot Combinations (with day-load balancing) ────────────────────────────
+
+function getSlotCombinations(creditHours, isLab, dayLoad) {
   const combos = [];
 
   if (isLab) {
@@ -85,17 +81,27 @@ function getSlotCombinations(creditHours, isLab) {
         combos.push([{ day, hour: h }, { day, hour: h + 1 }, { day, hour: h + 2 }]);
       }
     }
+    // Sort: prefer the day with least current load
+    if (dayLoad) {
+      combos.sort((a, b) => dayLoad[a[0].day] - dayLoad[b[0].day]);
+    }
     return combos;
   }
 
   if (creditHours === 3) {
-    // All C(5,3)=10 day combos, MWF first
     const dc = [];
     for (let a = 0; a < 5; a++)
       for (let b = a + 1; b < 5; b++)
         for (let c = b + 1; c < 5; c++)
           dc.push([a, b, c]);
+    // Sort by total day-load of the 3 chosen days (lightest first)
+    // Tie-break: prefer MWF
     dc.sort((x, y) => {
+      if (dayLoad) {
+        const xL = dayLoad[x[0]] + dayLoad[x[1]] + dayLoad[x[2]];
+        const yL = dayLoad[y[0]] + dayLoad[y[1]] + dayLoad[y[2]];
+        if (xL !== yL) return xL - yL;
+      }
       const xM = (x[0] === 0 && x[1] === 2 && x[2] === 4) ? 0 : 1;
       const yM = (y[0] === 0 && y[1] === 2 && y[2] === 4) ? 0 : 1;
       return xM - yM;
@@ -112,6 +118,11 @@ function getSlotCombinations(creditHours, isLab) {
       for (let b = a + 1; b < 5; b++)
         dc.push([a, b]);
     dc.sort((x, y) => {
+      if (dayLoad) {
+        const xL = dayLoad[x[0]] + dayLoad[x[1]];
+        const yL = dayLoad[y[0]] + dayLoad[y[1]];
+        if (xL !== yL) return xL - yL;
+      }
       const xT = (x[0] === 1 && x[1] === 3) ? 0 : 1;
       const yT = (y[0] === 1 && y[1] === 3) ? 0 : 1;
       return xT - yT;
@@ -122,10 +133,11 @@ function getSlotCombinations(creditHours, isLab) {
     return combos;
   }
 
-  // 1-CH single slot (non-lab)
+  // 1-CH single slot
   for (const d of DAYS)
     for (const h of HOURS)
       combos.push([{ day: d, hour: h }]);
+  if (dayLoad) combos.sort((a, b) => dayLoad[a[0].day] - dayLoad[b[0].day]);
   return combos;
 }
 
@@ -142,41 +154,72 @@ function programsOverlap(p1, p2) {
   return splitPrograms(p1).some(p => set2.has(p));
 }
 
-// ── Instructor minimum-gap constraint ───────────────────────────────────────
-//  Any two teaching slots for the same instructor on the same day must
-//  differ by more than MIN_GAP slot indices.
-//  MIN_GAP = 2 → slot 0 & slot 2 (diff 2) is TOO CLOSE; slot 0 & slot 3 (diff 3) is OK.
-
-const DEFAULT_MIN_GAP = 2;
+// ── Instructor minimum-gap (FIXED: inter-section only, lunch-aware) ───────
+//
+//  Gap is measured between DIFFERENT sections for the same instructor on
+//  the same day. The internal consecutive slots of a single section (e.g.
+//  a 3-slot lab) are NOT checked against each other.
+//
+//  Lunch break (between slot 4 and slot 5) adds +1 to the effective gap,
+//  so scheduling at slot 4 and slot 5 gives effective gap = 2 (1 index +
+//  1 lunch bonus), which equals MIN_GAP and is still a violation. Slot 4
+//  and slot 6 gives effective gap = 3 → OK.
 
 /**
- * Returns true if assigning newSlots to this instructor would place two
- * slots on the same day whose indices differ by ≤ minGap.
+ * Compute effective gap between two slot indices, accounting for lunch.
+ */
+function effectiveGap(h1, h2) {
+  const lo = Math.min(h1, h2);
+  const hi = Math.max(h1, h2);
+  let gap = hi - lo;
+  // If the two slots straddle the lunch break, add 1
+  if (lo <= BREAK_AFTER_SLOT && hi > BREAK_AFTER_SLOT) gap += 1;
+  return gap;
+}
+
+/**
+ * Returns true if assigning newSlots to this instructor would create a
+ * gap violation with a DIFFERENT already-scheduled section.
  */
 function wouldViolateInstructorGap(instructorName, newSlots, assignments, minGap = DEFAULT_MIN_GAP) {
   if (!instructorName || instructorName === 'TBA') return false;
 
-  // Group new slots by day
-  const dayMap = {};
+  // Build per-day range for the proposed section
+  const propByDay = {};  // day → { min, max }
   for (const s of newSlots) {
-    (dayMap[s.day] ||= new Set()).add(s.hour);
+    const e = propByDay[s.day];
+    if (!e) propByDay[s.day] = { min: s.hour, max: s.hour };
+    else { if (s.hour < e.min) e.min = s.hour; if (s.hour > e.max) e.max = s.hour; }
   }
 
-  for (const [dayStr, newHours] of Object.entries(dayMap)) {
-    const day = Number(dayStr);
-    // collect all hours this instructor already teaches on this day
-    const hoursOnDay = new Set(newHours);
-    for (const a of assignments) {
-      const aI = a.instructorName || '';
-      if (aI !== instructorName) continue;
-      for (const s of a.slots) {
-        if (s.day === day) hoursOnDay.add(s.hour);
-      }
+  for (const a of assignments) {
+    const aI = a.instructorName || '';
+    if (aI !== instructorName) continue;
+
+    // Build per-day range for this existing section
+    const existByDay = {};
+    for (const s of a.slots) {
+      const e = existByDay[s.day];
+      if (!e) existByDay[s.day] = { min: s.hour, max: s.hour };
+      else { if (s.hour < e.min) e.min = s.hour; if (s.hour > e.max) e.max = s.hour; }
     }
-    // Check every pair — if any two are within minGap, reject
-    const sorted = [...hoursOnDay].sort((a, b) => a - b);
-    for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i] - sorted[i - 1] <= minGap) return true;
+
+    // Check each shared day
+    for (const dayStr of Object.keys(propByDay)) {
+      const day = Number(dayStr);
+      const ex = existByDay[day];
+      if (!ex) continue;
+      const pr = propByDay[day];
+
+      // Gap = closest edges between the two sections
+      // Either proposed is after existing, or before
+      const gap1 = effectiveGap(ex.max, pr.min); // existing ends, proposed starts
+      const gap2 = effectiveGap(pr.max, ex.min); // proposed ends, existing starts
+      const gap  = Math.min(gap1, gap2);
+
+      // If sections overlap (gap would be 0 or negative in raw terms),
+      // that's caught by H2, not H5. Only flag true gaps that are too small.
+      if (gap > 0 && gap <= minGap) return true;
     }
   }
   return false;
@@ -184,15 +227,6 @@ function wouldViolateInstructorGap(instructorName, newSlots, assignments, minGap
 
 // ── Conflict detection ─────────────────────────────────────────────────────
 
-/**
- * Check conflicts between a proposed assignment and existing assignments.
- *
- * flags:
- *   skipH2           - ignore instructor conflicts
- *   skipH3           - ignore all program conflicts
- *   relaxH3Electives - skip H3 when either section is an elective
- *   relaxH3Groups    - skip H3 when sections have different group letters
- */
 function checkConflicts(proposed, existing, flags = {}) {
   const {
     roomName, slots, program, instructorName, enrollment, roomCapacity,
@@ -203,19 +237,15 @@ function checkConflicts(proposed, existing, flags = {}) {
   const violations = [];
 
   // H4 — capacity
-  if (enrollment > roomCapacity) {
-    violations.push('H4');
-  }
+  if (enrollment > roomCapacity) violations.push('H4');
 
   for (const ex of existing) {
     for (const ps of slots) {
       for (const es of ex.slots) {
         if (ps.day !== es.day || ps.hour !== es.hour) continue;
 
-        // H1 — room conflict (never relaxed)
-        if (ex.roomName === roomName) {
-          violations.push('H1');
-        }
+        // H1 — room conflict
+        if (ex.roomName === roomName) violations.push('H1');
 
         // H2 — instructor conflict
         if (!skipH2) {
@@ -231,19 +261,13 @@ function checkConflicts(proposed, existing, flags = {}) {
 
         // H3 — program conflict
         if (!skipH3) {
-          // Same course parallel sections can overlap (different student sub-groups)
           if (courseCode && ex.courseCode && courseCode === ex.courseCode) continue;
-          // No program = open elective, skip
           if (!program || !ex.program) continue;
-          // Must have overlapping atomic programs
           if (!programsOverlap(program, ex.program)) continue;
-          // Year-level check: same year only. yr>0 required for valid comparison
           const pY = yearLevel || 0;
           const eY = ex.yearLevel || 0;
           if (pY > 0 && eY > 0 && pY !== eY) continue;
-          // Elective relaxation
           if (relaxH3Electives && (isElective || ex.isElective)) continue;
-          // Group relaxation: A≠B means different student cohorts
           if (relaxH3Groups) {
             const pG = sectionGroup || '';
             const eG = ex.sectionGroup || '';
@@ -262,11 +286,13 @@ function checkConflicts(proposed, existing, flags = {}) {
 
 function sortByConstraintDensity(sections) {
   return [...sections].sort((a, b) => {
+    // Larger enrollment first — claim big rooms before small classes steal them
+    if ((b.enrollment || 40) !== (a.enrollment || 40)) return (b.enrollment || 40) - (a.enrollment || 40);
     // Real instructor first
     const aI = a.instructorName !== 'TBA' ? 1 : 0;
     const bI = b.instructorName !== 'TBA' ? 1 : 0;
     if (bI !== aI) return bI - aI;
-    // Non-elective first (harder to place)
+    // Non-elective first
     const aE = a.isElective ? 0 : 1;
     const bE = b.isElective ? 0 : 1;
     if (bE !== aE) return bE - aE;
@@ -316,13 +342,12 @@ function makeProposed(sec, room, combo) {
 
 // ── Try to place a single section ──────────────────────────────────────────
 
-function tryPlace(sec, rooms, assignments, flags = {}) {
+function tryPlace(sec, rooms, assignments, flags = {}, dayLoad = null) {
   const { enforceGap = true, minGap = DEFAULT_MIN_GAP, ...conflictFlags } = flags;
   const orderedRooms = sortRooms(rooms, sec);
-  const combos = getSlotCombinations(sec.creditHours, sec.isLab);
+  const combos = getSlotCombinations(sec.creditHours, sec.isLab, dayLoad);
 
   for (const combo of combos) {
-    // Check instructor-gap constraint before room scan
     if (enforceGap &&
         wouldViolateInstructorGap(sec.instructorName, combo, assignments, minGap)) {
       continue;
@@ -338,76 +363,143 @@ function tryPlace(sec, rooms, assignments, flags = {}) {
   return null;
 }
 
-// ── Phase implementations ──────────────────────────────────────────────────
+// ── Phase 1: Strict Greedy ─────────────────────────────────────────────────
 
 function phase1(sections, rooms) {
   const assignments = [];
   const unassigned  = [];
+  const dayLoad = createDayLoad();
   for (const sec of sortByConstraintDensity(sections)) {
-    const p = tryPlace(sec, rooms, assignments);
-    (p ? assignments : unassigned).push(p || sec);
+    const p = tryPlace(sec, rooms, assignments, {}, dayLoad);
+    if (p) { assignments.push(p); recordLoad(dayLoad, p.slots); }
+    else unassigned.push(sec);
   }
-  return { assignments: assignments.filter(Boolean), unassigned };
+  return { assignments, unassigned, dayLoad };
 }
 
-function phase2(assignments, unassigned, rooms) {
-  let rem = unassigned;
-  for (let i = 0; i < 5 && rem.length > 0; i++) {
-    const next = [];
-    for (const sec of rem) {
-      const p = tryPlace(sec, rooms, assignments);
-      if (p) assignments.push(p); else next.push(sec);
+// ── Phase 2: Backtracking Swap Repair ──────────────────────────────────────
+//  For each unassigned section U:
+//    1. Find placed sections that conflict with U on at least one slot.
+//    2. Try removing that section V, placing U, then re-placing V elsewhere.
+//    3. If V re-places successfully → keep both. Otherwise undo.
+
+function phase2(assignments, unassigned, rooms, dayLoad) {
+  const still = [];
+
+  for (const sec of unassigned) {
+    // First try direct placement (no swap)
+    const direct = tryPlace(sec, rooms, assignments, {}, dayLoad);
+    if (direct) {
+      assignments.push(direct);
+      recordLoad(dayLoad, direct.slots);
+      continue;
     }
-    if (next.length === rem.length) break;
-    rem = next;
+
+    // Attempt swap: find candidate victims
+    let placed = false;
+    for (let vi = 0; vi < assignments.length && !placed; vi++) {
+      const victim = assignments[vi];
+      // Only consider swapping if victim shares instructor or room/slot overlap
+      if (!wouldBenefitSwap(sec, victim)) continue;
+
+      // Remove victim
+      const removed = assignments.splice(vi, 1)[0];
+      unrecordLoad(dayLoad, removed.slots);
+
+      // Try placing sec
+      const pU = tryPlace(sec, rooms, assignments, {}, dayLoad);
+      if (pU) {
+        assignments.push(pU);
+        recordLoad(dayLoad, pU.slots);
+        // Try re-placing victim
+        const pV = tryPlace(removed, rooms, assignments, {}, dayLoad);
+        if (pV) {
+          assignments.push(pV);
+          recordLoad(dayLoad, pV.slots);
+          placed = true;
+        } else {
+          // Undo: remove pU, restore victim
+          const idx = assignments.indexOf(pU);
+          if (idx >= 0) assignments.splice(idx, 1);
+          unrecordLoad(dayLoad, pU.slots);
+          assignments.splice(vi, 0, removed);
+          recordLoad(dayLoad, removed.slots);
+        }
+      } else {
+        // Can't place sec even after removing victim — restore
+        assignments.splice(vi, 0, removed);
+        recordLoad(dayLoad, removed.slots);
+      }
+    }
+
+    if (!placed) still.push(sec);
   }
-  return { assignments, unassigned: rem };
+
+  return { assignments, unassigned: still, dayLoad };
 }
 
-function phase3(assignments, unassigned, rooms) {
+/** Quick check: would removing victim potentially help place sec? */
+function wouldBenefitSwap(sec, victim) {
+  // Same instructor → removing victim frees instructor slots
+  if (sec.instructorName && sec.instructorName !== 'TBA' &&
+      sec.instructorName === victim.instructorName) return true;
+  // Overlapping program+year → removing victim frees H3 slots
+  if (programsOverlap(sec.program, victim.program)) {
+    const sY = sec.yearLevel || 0;
+    const vY = victim.yearLevel || 0;
+    if (sY === 0 || vY === 0 || sY === vY) return true;
+  }
+  return false;
+}
+
+// ── Phases 3–6 (progressive relaxation) ────────────────────────────────────
+
+function phase3(assignments, unassigned, rooms, dayLoad) {
   const still = [];
   for (const sec of unassigned) {
-    const p = tryPlace(sec, rooms, assignments, { relaxH3Electives: true });
-    if (p) assignments.push(p); else still.push(sec);
+    const p = tryPlace(sec, rooms, assignments, { relaxH3Electives: true }, dayLoad);
+    if (p) { assignments.push(p); recordLoad(dayLoad, p.slots); }
+    else still.push(sec);
   }
   return { assignments, unassigned: still };
 }
 
-function phase4(assignments, unassigned, rooms) {
+function phase4(assignments, unassigned, rooms, dayLoad) {
   const still = [];
   for (const sec of unassigned) {
-    const p = tryPlace(sec, rooms, assignments, { relaxH3Electives: true, relaxH3Groups: true });
-    if (p) assignments.push(p); else still.push(sec);
+    const p = tryPlace(sec, rooms, assignments, { relaxH3Electives: true, relaxH3Groups: true }, dayLoad);
+    if (p) { assignments.push(p); recordLoad(dayLoad, p.slots); }
+    else still.push(sec);
   }
   return { assignments, unassigned: still };
 }
 
-function phase5(assignments, unassigned, rooms) {
+function phase5(assignments, unassigned, rooms, dayLoad) {
   const still = [];
   for (const sec of unassigned) {
-    const p = tryPlace(sec, rooms, assignments, { skipH2: true, relaxH3Electives: true, relaxH3Groups: true, enforceGap: false });
+    const p = tryPlace(sec, rooms, assignments,
+      { skipH2: true, relaxH3Electives: true, relaxH3Groups: true, enforceGap: false }, dayLoad);
     if (p) {
       const n = p.instructorName || 'TBA';
       if (n !== 'TBA' && !n.endsWith('(TBD)')) p.instructorName = n + ' (TBD)';
       assignments.push(p);
-    } else {
-      still.push(sec);
-    }
+      recordLoad(dayLoad, p.slots);
+    } else still.push(sec);
   }
   return { assignments, unassigned: still };
 }
 
-function phase6(assignments, unassigned, rooms) {
+function phase6(assignments, unassigned, rooms, dayLoad) {
   const still = [];
   for (const sec of unassigned) {
-    const p = tryPlace(sec, rooms, assignments, { skipH2: true, skipH3: true, enforceGap: false });
+    const p = tryPlace(sec, rooms, assignments,
+      { skipH2: true, skipH3: true, enforceGap: false }, dayLoad);
     if (p) {
       const n = (p.instructorName || 'TBA').replace(/ \(TBD\)$/, '');
       p.instructorName = n + ' (FORCE)';
       assignments.push(p);
-    } else {
-      still.push(sec);
-    }
+      recordLoad(dayLoad, p.slots);
+    } else still.push(sec);
   }
   return { assignments, unassigned: still };
 }
@@ -427,15 +519,13 @@ export function countHardViolations(assignments) {
           // H1
           if (a.roomName === b.roomName) count++;
 
-          // H2 (skip TBA/TBD/FORCE)
+          // H2
           const aI = a.instructorName || '';
           const bI = b.instructorName || '';
           if (aI && bI && aI !== 'TBA' && bI !== 'TBA' &&
               !aI.endsWith('(TBD)') && !bI.endsWith('(TBD)') &&
               !aI.endsWith('(FORCE)') && !bI.endsWith('(FORCE)') &&
-              aI === bI) {
-            count++;
-          }
+              aI === bI) count++;
 
           // H3
           if (a.courseCode && b.courseCode && a.courseCode === b.courseCode) continue;
@@ -449,7 +539,6 @@ export function countHardViolations(assignments) {
           const bG = b.sectionGroup || '';
           if (aG && bG && aG !== bG) continue;
           if (aI.endsWith('(FORCE)') || bI.endsWith('(FORCE)')) continue;
-
           count++;
         }
       }
@@ -463,27 +552,26 @@ export function countHardViolations(assignments) {
 export function runScheduler(sections, rooms) {
   console.log(`\n=== SCHEDULING ${sections.length} sections into ${rooms.length} rooms ===\n`);
 
-  let { assignments, unassigned } = phase1(sections, rooms);
-  console.log(`  Phase 1 (Strict):          ${assignments.length} placed, ${unassigned.length} remain`);
+  let { assignments, unassigned, dayLoad } = phase1(sections, rooms);
+  console.log(`  Phase 1 (Strict Greedy):   ${assignments.length} placed, ${unassigned.length} remain`);
 
-  ({ assignments, unassigned } = phase2(assignments, unassigned, rooms));
-  console.log(`  Phase 2 (Repair):          ${assignments.length} placed, ${unassigned.length} remain`);
+  ({ assignments, unassigned, dayLoad } = phase2(assignments, unassigned, rooms, dayLoad));
+  console.log(`  Phase 2 (Swap Repair):     ${assignments.length} placed, ${unassigned.length} remain`);
 
-  ({ assignments, unassigned } = phase3(assignments, unassigned, rooms));
+  ({ assignments, unassigned } = phase3(assignments, unassigned, rooms, dayLoad));
   console.log(`  Phase 3 (Relax Electives): ${assignments.length} placed, ${unassigned.length} remain`);
 
-  ({ assignments, unassigned } = phase4(assignments, unassigned, rooms));
+  ({ assignments, unassigned } = phase4(assignments, unassigned, rooms, dayLoad));
   console.log(`  Phase 4 (Relax Groups):    ${assignments.length} placed, ${unassigned.length} remain`);
 
-  ({ assignments, unassigned } = phase5(assignments, unassigned, rooms));
+  ({ assignments, unassigned } = phase5(assignments, unassigned, rooms, dayLoad));
   console.log(`  Phase 5 (Soft Labs):       ${assignments.length} placed, ${unassigned.length} remain`);
 
   if (unassigned.length > 0) {
-    ({ assignments, unassigned } = phase6(assignments, unassigned, rooms));
+    ({ assignments, unassigned } = phase6(assignments, unassigned, rooms, dayLoad));
     console.log(`  Phase 6 (Force):           ${assignments.length} placed, ${unassigned.length} remain`);
   }
 
-  // Mark truly unschedulable
   for (const sec of unassigned) {
     assignments.push({
       ...makeProposed(sec, { name: 'UNSCHEDULED', capacity: 0 }, []),
