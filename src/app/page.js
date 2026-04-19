@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 const HOUR_LABEL = [
   '08:00–08:50',
@@ -140,38 +140,64 @@ export default function TimetablePage() {
   const [msg, setMsg] = useState('');
   const [view, setView] = useState('grid');
 
+  // Auto-load the list of saved schedules on page open
+  useEffect(() => { loadList(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function loadList() {
-    const r = await fetch('/api/timetable');
-    const d = await r.json();
-    setTimetableList(Array.isArray(d) ? d : []);
+    try {
+      const r = await fetch('/api/timetable');
+      const d = await r.json();
+      const list = Array.isArray(d) ? d : [];
+      setTimetableList(list);
+      // Auto-select and load the most recent schedule if none is loaded yet
+      if (list.length > 0 && !timetableId) {
+        setTimetableId(list[0]._id);
+        await loadTimetable(list[0]._id, filter);
+      }
+    } catch (e) {
+      console.error('loadList error:', e);
+    }
   }
 
   async function loadTimetable(id, f = filter) {
     if (!id) return;
     setLoading(true);
-    const p = new URLSearchParams({ id });
-    if (f.program)    p.set('program', f.program);
-    if (f.instructor) p.set('instructor', f.instructor);
-    if (f.room)       p.set('room', f.room);
-    const r = await fetch(`/api/timetable?${p}`);
-    const d = await r.json();
-    setMeta({ generatedAt: d.generatedAt, hardViolations: d.hardViolations, softScore: d.softScore });
-    setAssignments(d.assignments || []);
-    setLoading(false);
+    try {
+      const p = new URLSearchParams({ id });
+      if (f.program)    p.set('program', f.program);
+      if (f.instructor) p.set('instructor', f.instructor);
+      if (f.room)       p.set('room', f.room);
+      const r = await fetch(`/api/timetable?${p}`);
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      setMeta({ generatedAt: d.generatedAt, hardViolations: d.hardViolations, softScore: d.softScore });
+      setAssignments(d.assignments || []);
+    } catch (e) {
+      console.error('loadTimetable error:', e);
+      setMsg('Failed to load timetable: ' + e.message);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function generate() {
     setGenerating(true);
     setMsg('');
-    const r = await fetch('/api/schedule', { method: 'POST' });
-    const d = await r.json();
-    setMsg(d.message || JSON.stringify(d));
-    if (d.timetableId) {
-      setTimetableId(d.timetableId);
-      await loadList();
-      await loadTimetable(d.timetableId, filter);
+    try {
+      const r = await fetch('/api/schedule', { method: 'POST' });
+      const d = await r.json();
+      setMsg(d.message || d.error || JSON.stringify(d));
+      if (d.timetableId) {
+        setTimetableId(d.timetableId);
+        await loadList();
+        await loadTimetable(d.timetableId, filter);
+      }
+    } catch (e) {
+      console.error('generate error:', e);
+      setMsg('Failed to generate schedule: ' + e.message);
+    } finally {
+      setGenerating(false);
     }
-    setGenerating(false);
   }
 
   const grid = buildGrid(assignments);
