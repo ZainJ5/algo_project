@@ -37,8 +37,8 @@ export async function GET(request) {
     if (room)       assignments = assignments.filter(a => a.roomName === room);
 
     return Response.json({ ...doc, assignments });
-  } catch (err) {
-    console.error('GET /api/timetable error:', err);
-    return Response.json({ error: err.message || 'Internal server error' }, { status: 500 });
+  } catch (error) {
+    console.error('Timetable GET Error:', error);
+    return Response.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }

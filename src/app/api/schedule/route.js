@@ -36,7 +36,7 @@ export async function POST(request) {
 
     // Save to DB
     const doc = await Timetable.create({
-      status:         'complete',
+      status:         hardViolations === 0 ? 'complete' : 'complete',
       hardViolations,
       softScore,
       assignments,
@@ -52,8 +52,8 @@ export async function POST(request) {
         ? 'Schedule generated with ZERO hard constraint violations.'
         : `Schedule generated. ${hardViolations} hard violations remain.`,
     });
-  } catch (err) {
-    console.error('POST /api/schedule error:', err);
-    return Response.json({ error: err.message || 'Internal server error' }, { status: 500 });
+  } catch (error) {
+    console.error('Schedule POST Error:', error);
+    return Response.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }
 }
