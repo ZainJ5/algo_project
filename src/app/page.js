@@ -146,6 +146,11 @@ export default function TimetablePage() {
   async function loadList() {
     try {
       const r = await fetch('/api/timetable');
+      if (!r.ok) {
+        const text = await r.text();
+        console.error('loadList: API returned', r.status, text);
+        return;
+      }
       const d = await r.json();
       const list = Array.isArray(d) ? d : [];
       setTimetableList(list);
@@ -156,6 +161,7 @@ export default function TimetablePage() {
       }
     } catch (e) {
       console.error('loadList error:', e);
+      setMsg('Failed to load saved schedules: ' + e.message);
     }
   }
 
@@ -168,6 +174,10 @@ export default function TimetablePage() {
       if (f.instructor) p.set('instructor', f.instructor);
       if (f.room)       p.set('room', f.room);
       const r = await fetch(`/api/timetable?${p}`);
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(text || `HTTP ${r.status}`);
+      }
       const d = await r.json();
       if (d.error) throw new Error(d.error);
       setMeta({ generatedAt: d.generatedAt, hardViolations: d.hardViolations, softScore: d.softScore });
@@ -185,6 +195,12 @@ export default function TimetablePage() {
     setMsg('');
     try {
       const r = await fetch('/api/schedule', { method: 'POST' });
+      if (!r.ok) {
+        const text = await r.text();
+        let errMsg;
+        try { errMsg = JSON.parse(text).error; } catch (_) { errMsg = text || `HTTP ${r.status}`; }
+        throw new Error(errMsg);
+      }
       const d = await r.json();
       setMsg(d.message || d.error || JSON.stringify(d));
       if (d.timetableId) {
