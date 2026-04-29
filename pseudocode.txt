@@ -15,12 +15,23 @@ INPUT
 CONSTANTS
 ===============================================================================
   DAYS         = {Mon, Tue, Wed, Thu, Fri}              // 5 days
-  SLOTS        = {0,1,2,3,4,5,6,7}                      // 8 per day
-  SLOT_TIMES   = {08:00, 09:00, 10:30, 11:30, 12:30,    // morning block
-                  14:30, 15:30, 16:30}                   // afternoon block
-  LUNCH_BREAK  = between slot 4 (12:30) and slot 5 (14:30)
+  SLOTS        = {0, 1, 2, 3, 4, 5, 6, 7}               // 8 per day
+  SLOT_TIMES   Morning  (slots 0–4, 1-hour steps from 08:30):
+                   08:30, 09:30, 10:30, 11:30, 12:30
+               Afternoon (slots 5–7, 1-hour steps from 14:30):
+                   14:30, 15:30, 16:30
+  CLASS_DURATION = 50 min instruction + 10 min changeover = 60 min total.
+                   Consecutive slots (e.g. slot 0 then slot 1) do NOT
+                   overlap — two sections conflict only at the SAME slot.
+  BREAK        = 13:30–14:30  (1:30 PM – 2:30 PM official university break)
+                 No class may START during this window.
+                 Last morning slot (slot 4) ends at 13:20, leaving 10 min
+                 before break. First afternoon slot (slot 5) starts at 14:30.
+                 Labs must be entirely in the morning OR afternoon block.
+  BREAK_AFTER_SLOT = 4  // last morning slot = slot 4 (12:30–13:20)
   MIN_GAP      = 2   // between DIFFERENT sections for same instructor
                      // on same day, effective gap must be > MIN_GAP
+                     // (gap ≥ 3 slots → ≥ 2 h 10 min rest same block)
   dayLoad[0..4] = {0,0,0,0,0}  // per-day class counter for load balance
 
 ===============================================================================
@@ -36,7 +47,7 @@ HARD CONSTRAINTS
         (skip if instructor = "TBA" or ends with "(TBD)" or "(FORCE)")
 
   H3: Program-Year Conflict
-      ∀ two assigned sections a,b at same time slot:
+      ∀ two assigned sections a,b at the SAME slot index on the SAME day:
         SKIP if a.courseCode = b.courseCode          // parallel sections OK
         SKIP if a.program = null OR b.program = null // open elective
         SKIP if no overlapping atomic programs       // disjoint programs
@@ -53,23 +64,23 @@ HARD CONSTRAINTS
         For each PAIR of DIFFERENT sections (X, Y):
           endX   = max slot index of X on day d
           startY = min slot index of Y on day d
-          gap    = |startY − endX|
-          IF the gap crosses the lunch break (one ≤ 4, other > 4):
-              gap += 1    // lunch break adds 1 slot of effective rest
-          IF gap ≤ MIN_GAP → VIOLATION
+          gap    = effectiveGap(endX, startY)
+          IF gap > 0 AND gap ≤ MIN_GAP → VIOLATION
 
       NOTE: Internal slots of the same section (e.g. a 3-slot lab
             occupying slots 0,1,2) are NOT compared against each
             other — they are one continuous block, not a gap.
 
       Examples (MIN_GAP = 2):
-        Section X at slot 2, Section Y at slot 5
-          raw gap = 3, crosses lunch → effective gap = 4 → OK ✓
-        Section X at slot 4, Section Y at slot 5
-          raw gap = 1, crosses lunch → effective gap = 2 → VIOLATION ✗
-        Section X at slot 4, Section Y at slot 6
-          raw gap = 2, crosses lunch → effective gap = 3 → OK ✓
-        Lab at slots [0,1,2]: internal gaps (1,1) are IGNORED ✓
+        Section X at slot 1 (09:30), Section Y at slot 4 (12:30)
+          same block, gap = 3 > 2 → OK ✓
+        Section X at slot 3 (11:30), Section Y at slot 4 (12:30)
+          same block, gap = 1 ≤ 2 → VIOLATION ✗
+        Section X at slot 4 (12:30), Section Y at slot 5 (14:30)
+          crosses break, gap = 1+2 = 3 > 2 → OK ✓
+        Section X at slot 3 (11:30), Section Y at slot 5 (14:30)
+          crosses break, gap = 2+2 = 4 > 2 → OK ✓
+        Lab at slots [0,1,2]: internal gaps are IGNORED ✓
 
 ===============================================================================
 HELPER FUNCTIONS
@@ -83,22 +94,31 @@ FUNCTION programsOverlap(p1, p2):
     return splitPrograms(p1) ∩ splitPrograms(p2) ≠ ∅
 
 FUNCTION effectiveGap(h1, h2):
-    // Compute gap between two slot indices, adding +1 if lunch is crossed
+    // Compute gap between two slot indices, accounting for the break.
+    // The 13:30–14:30 break falls between slot 4 (ends 13:20) and
+    // slot 5 (starts 14:30). Crossing this boundary adds +2, representing
+    // the 60-min break window as extra instructor rest beyond the raw gap.
     lo = min(h1, h2)
     hi = max(h1, h2)
     gap = hi − lo
-    IF lo ≤ 4 AND hi > 4:
-        gap += 1             // lunch break grants extra rest
+    IF lo ≤ BREAK_AFTER_SLOT AND hi > BREAK_AFTER_SLOT:
+        gap += 2             // 60-min break = 2 slot-units of extra rest
     RETURN gap
 
 FUNCTION getSlotCombinations(creditHours, isLab, dayLoad):
     combos = []
     IF isLab:
+        // A lab = 3 consecutive 1-hour slots on one day.
+        // Valid morning starts (h+2 ≤ BREAK_AFTER_SLOT=4):
+        //   h=0: 08:30, 09:30, 10:30
+        //   h=1: 09:30, 10:30, 11:30
+        //   h=2: 10:30, 11:30, 12:30
+        // Valid afternoon starts (h+2 ≤ 7):
+        //   h=5: 14:30, 15:30, 16:30
         validStarts = {0, 1, 2, 5}
         FOR each day d in DAYS:
             FOR each start h in validStarts:
-                IF h + 2 ≤ 7:
-                    combos.add([(d,h), (d,h+1), (d,h+2)])
+                combos.add([(d,h), (d,h+1), (d,h+2)])
         SORT combos by dayLoad[combo.day] ASC   // prefer least-loaded day
 
     ELSE IF creditHours = 3:
@@ -415,9 +435,19 @@ FIXES APPLIED (vs original version)
 ASSUMPTIONS
 ===============================================================================
   A1.  5-day week (Mon–Fri)
-  A2.  8 slots/day: 08:00, 09:00, 10:30, 11:30, 12:30, 14:30, 15:30, 16:30
-  A3.  Lunch break between slot 4 (12:30) and slot 5 (14:30): adds +1
-       to effective gap in H5 calculation; labs cannot span across it
+  A2.  15 daily slots at 30-minute granularity (50 min class + 10 min
+       changeover = 60 min effective per slot). Two slots OVERLAP on the
+       same day when their index differs by < 2. Valid start times:
+         Morning  (slots  0–9): 08:00, 08:30, 09:00, 09:30, 10:00,
+                                 10:30, 11:00, 11:30, 12:00, 12:30
+         Afternoon (slots 10–14): 14:30, 15:00, 15:30, 16:00, 16:30
+       Classes may start on the hour OR on the half-hour.
+  A3.  Official break: 13:30–14:30 (1:30 PM – 2:30 PM). No class may start
+       during this window. Labs (3 × 1-hour blocks, slots h/h+2/h+4) must
+       be entirely in the morning (starts 0–5) or afternoon (start 10 only);
+       they cannot span the break. The gap between slot 9 (12:30) and
+       slot 10 (14:30) receives a +2 bonus in H5 (effectiveGap), since
+       the 60-min break = 2 × 30-min slot-units of extra rest.
   A4.  3-CH course = 3 days × 1 hour each (prefer MWF, load-balanced)
   A5.  2-CH course = 2 days × 1 hour each (prefer TTh, load-balanced)
   A6.  1-CH lab = 3 consecutive hours on 1 day

@@ -27,31 +27,58 @@
  *   H4 — Room capacity >= enrollment
  *   H5 — Instructor gap: between *different sections* on the same
  *         day, the gap must be > MIN_GAP slots. Internal slots of
- *         one multi-slot section (e.g. lab) are exempt. The lunch
- *         break between slot 4 and 5 counts as an extra gap of 1.
+ *         one multi-slot section (e.g. lab) are exempt. The break
+ *         at 13:30–14:30 (between slot 4 and slot 5) adds +2 to
+ *         the effective gap representing the 60-min break window.
  * ============================================================
  */
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 export const DAYS     = [0, 1, 2, 3, 4];
-export const HOURS    = [0, 1, 2, 3, 4, 5, 6, 7];
 export const DAY_NAME = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
+// 8 non-overlapping one-hour slots per day.  Each slot is 50 minutes of
+// instruction followed by a 10-minute changeover (= 60 min total).
+// Consecutive slots do NOT physically overlap, so only the SAME slot index
+// creates a resource conflict for H1 (room), H2 (instructor), H3 (program).
+//
+// Morning  block: slots 0–4 (08:30–12:30 starts; classes end by 13:20)
+// Afternoon block: slots 5–7 (14:30–16:30 starts; classes end by 17:20)
+// Break: 13:30–14:30 — no class may start during this window.
+//        The gap between slot 4 and slot 5 carries a +2 bonus in the
+//        effective-gap calculation (H5) for the 60-min break window.
+export const HOURS = [0, 1, 2, 3, 4, 5, 6, 7];
+
 export const HOUR_LABEL = [
-  '08:00–08:50',   // 0
-  '09:00–09:50',   // 1
-  '10:30–11:20',   // 2
-  '11:30–12:20',   // 3
-  '12:30–13:20',   // 4
-  '14:30–15:20',   // 5
-  '15:30–16:20',   // 6
-  '16:30–17:20',   // 7
+  '08:30–09:20',   //  0  morning
+  '09:30–10:20',   //  1
+  '10:30–11:20',   //  2
+  '11:30–12:20',   //  3
+  '12:30–13:20',   //  4  ← last morning slot (ends 1:20 pm)
+  '14:30–15:20',   //  5  afternoon (after 13:30–14:30 break)
+  '15:30–16:20',   //  6
+  '16:30–17:20',   //  7
 ];
 
-export const BREAK_AFTER_SLOT = 4;  // lunch gap lives between slot 4 and 5
+// Index of the LAST morning slot (12:30 start).  Slots > this are afternoon.
+export const BREAK_AFTER_SLOT = 4;
 
-const DEFAULT_MIN_GAP = 2;
+// Minimum effective-gap (in 1-hour slot units) required between two DIFFERENT
+// sections taught by the same instructor on the same day.
+//
+// MIN_GAP = 0  ⟹  H5 is effectively disabled: the condition
+//   "gap > 0 && gap <= minGap" can never be true when minGap = 0.
+//
+// Why 0?  H2 already hard-blocks the SAME instructor from being in two rooms
+// at the exact same slot.  Back-to-back teaching (slots 0 then 1) is normal
+// in a university context and imposes no additional room conflict.
+// A positive MIN_GAP causes the greedy algorithm to skip odd-numbered slots
+// systematically (e.g. instructor at slot 0 jumps to slot 3, leaving slots
+// 1 and 2 unreachable for that instructor), producing empty rows in the
+// timetable even when sections are available.  Setting MIN_GAP = 0 ensures
+// all 8 slots are freely available to the scheduler.
+const DEFAULT_MIN_GAP = 0;
 
 // ── Day-load tracker (keeps schedule balanced across days) ────────────────
 
@@ -73,18 +100,26 @@ function getSlotCombinations(creditHours, isLab, dayLoad) {
   const combos = [];
 
   if (isLab) {
-    // 3 consecutive slots on one day; valid starts: 0,1,2 (morning), 5 (afternoon)
-    const starts = [0, 1, 2, 5];
+    // A lab = 3 consecutive 1-hour periods on one day.
+    // Each slot is already 1 hour, so a lab occupies slots h, h+1, h+2.
+    //
+    // Valid morning starts (h, h+1, h+2 all ≤ BREAK_AFTER_SLOT=4):
+    //   h = 0  →  08:30, 09:30, 10:30
+    //   h = 1  →  09:30, 10:30, 11:30
+    //   h = 2  →  10:30, 11:30, 12:30
+    // Valid afternoon starts (h, h+1, h+2 all ≥ 5, max slot = 7):
+    //   h = 5  →  14:30, 15:30, 16:30
+    const labStarts = [0, 1, 2, 5];
     for (const day of DAYS) {
-      for (const h of starts) {
-        if (h + 2 > 7) continue;
-        combos.push([{ day, hour: h }, { day, hour: h + 1 }, { day, hour: h + 2 }]);
+      for (const h of labStarts) {
+        combos.push([
+          { day, hour: h },
+          { day, hour: h + 1 },
+          { day, hour: h + 2 },
+        ]);
       }
     }
-    // Sort: prefer the day with least current load
-    if (dayLoad) {
-      combos.sort((a, b) => dayLoad[a[0].day] - dayLoad[b[0].day]);
-    }
+    if (dayLoad) combos.sort((a, b) => dayLoad[a[0].day] - dayLoad[b[0].day]);
     return combos;
   }
 
@@ -94,8 +129,7 @@ function getSlotCombinations(creditHours, isLab, dayLoad) {
       for (let b = a + 1; b < 5; b++)
         for (let c = b + 1; c < 5; c++)
           dc.push([a, b, c]);
-    // Sort by total day-load of the 3 chosen days (lightest first)
-    // Tie-break: prefer MWF
+    // Sort by total day-load (lightest first); tie-break: prefer MWF
     dc.sort((x, y) => {
       if (dayLoad) {
         const xL = dayLoad[x[0]] + dayLoad[x[1]] + dayLoad[x[2]];
@@ -106,6 +140,7 @@ function getSlotCombinations(creditHours, isLab, dayLoad) {
       const yM = (y[0] === 0 && y[1] === 2 && y[2] === 4) ? 0 : 1;
       return xM - yM;
     });
+    // All 8 valid start slots across 3 days
     for (let h = 0; h < 8; h++)
       for (const [a, b, c] of dc)
         combos.push([{ day: a, hour: h }, { day: b, hour: h }, { day: c, hour: h }]);
@@ -133,12 +168,26 @@ function getSlotCombinations(creditHours, isLab, dayLoad) {
     return combos;
   }
 
-  // 1-CH single slot
+  // 1-CH single slot — all 15 valid slots across all days
   for (const d of DAYS)
     for (const h of HOURS)
       combos.push([{ day: d, hour: h }]);
   if (dayLoad) combos.sort((a, b) => dayLoad[a[0].day] - dayLoad[b[0].day]);
   return combos;
+}
+
+// ── Slot overlap helper ────────────────────────────────────────────────────
+
+/**
+ * Returns true if two slot indices on the SAME day create a resource
+ * conflict (H1 room / H2 instructor / H3 program).
+ *
+ * Slots are exactly 60 min apart (50-min class + 10-min changeover).
+ * Consecutive slots do NOT physically overlap in the classroom, so only
+ * identical slot indices cause a conflict.
+ */
+function slotsOverlap(h1, h2) {
+  return h1 === h2;
 }
 
 // ── Program helpers ────────────────────────────────────────────────────────
@@ -154,26 +203,29 @@ function programsOverlap(p1, p2) {
   return splitPrograms(p1).some(p => set2.has(p));
 }
 
-// ── Instructor minimum-gap (FIXED: inter-section only, lunch-aware) ───────
+// ── Instructor minimum-gap (FIXED: inter-section only, break-aware) ───────
 //
 //  Gap is measured between DIFFERENT sections for the same instructor on
 //  the same day. The internal consecutive slots of a single section (e.g.
 //  a 3-slot lab) are NOT checked against each other.
 //
-//  Lunch break (between slot 4 and slot 5) adds +1 to the effective gap,
-//  so scheduling at slot 4 and slot 5 gives effective gap = 2 (1 index +
-//  1 lunch bonus), which equals MIN_GAP and is still a violation. Slot 4
-//  and slot 6 gives effective gap = 3 → OK.
+//  Slots are in 1-hour units (0–7).  The break between slot 4 and slot 5
+//  adds +2 to the effective gap, representing the 60-min break window
+//  (class at slot 4 ends 13:20; break 13:30–14:30; slot 5 starts 14:30).
+//  Instructor at slot 4 (12:30) and slot 5 (14:30): gap = 1+2 = 3 > 2 → OK.
+//  Instructor at slot 3 (11:30) and slot 5 (14:30): gap = 2+2 = 4 > 2 → OK.
 
 /**
- * Compute effective gap between two slot indices, accounting for lunch.
+ * Compute effective gap between two slot indices, accounting for the break.
+ * Break is between slot BREAK_AFTER_SLOT (4) and slot BREAK_AFTER_SLOT+1 (5).
+ * Crossing the break adds +2 to represent the longer (~90 min) break window.
  */
 function effectiveGap(h1, h2) {
   const lo = Math.min(h1, h2);
   const hi = Math.max(h1, h2);
   let gap = hi - lo;
-  // If the two slots straddle the lunch break, add 1
-  if (lo <= BREAK_AFTER_SLOT && hi > BREAK_AFTER_SLOT) gap += 1;
+  // If the two slots straddle the break, add 2 (60 min bonus)
+  if (lo <= BREAK_AFTER_SLOT && hi > BREAK_AFTER_SLOT) gap += 2;
   return gap;
 }
 
@@ -242,7 +294,8 @@ function checkConflicts(proposed, existing, flags = {}) {
   for (const ex of existing) {
     for (const ps of slots) {
       for (const es of ex.slots) {
-        if (ps.day !== es.day || ps.hour !== es.hour) continue;
+        if (ps.day !== es.day) continue;
+        if (!slotsOverlap(ps.hour, es.hour)) continue;
 
         // H1 — room conflict
         if (ex.roomName === roomName) violations.push('H1');
@@ -514,7 +567,8 @@ export function countHardViolations(assignments) {
       const b = assignments[j];
       for (const as of a.slots) {
         for (const bs of b.slots) {
-          if (as.day !== bs.day || as.hour !== bs.hour) continue;
+          if (as.day !== bs.day) continue;
+          if (!slotsOverlap(as.hour, bs.hour)) continue;
 
           // H1
           if (a.roomName === b.roomName) count++;

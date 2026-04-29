@@ -2,14 +2,14 @@
 import { useState, useEffect } from 'react';
 
 const HOUR_LABEL = [
-  '08:00–08:50',
-  '09:00–09:50',
-  '10:30–11:20',
-  '11:30–12:20',
-  '12:30–13:20',
-  '14:30–15:20',
-  '15:30–16:20',
-  '16:30–17:20',
+  '08:30–09:20',   //  0  morning
+  '09:30–10:20',   //  1
+  '10:30–11:20',   //  2
+  '11:30–12:20',   //  3
+  '12:30–13:20',   //  4  ← last morning slot
+  '14:30–15:20',   //  5  afternoon
+  '15:30–16:20',   //  6
+  '16:30–17:20',   //  7
 ];
 
 const DAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
@@ -42,6 +42,7 @@ function pal(program) {
 }
 
 function buildGrid(assignments) {
+  // 8 non-overlapping 1-hour slots per day (slots 0–4 morning, 5–7 afternoon)
   const g = Array.from({ length: 5 }, () => Array.from({ length: 8 }, () => []));
   for (const a of assignments)
     for (const s of a.slots || [])
@@ -447,7 +448,7 @@ export default function TimetablePage() {
                           fontSize: '11px', fontWeight: '600', letterSpacing: '0.06em',
                           textTransform: 'uppercase',
                         }}>
-                          Break · Lunch / Jumu'ah Prayer · 13:20 – 14:30
+                          Break · 13:30 – 14:30 (Prayer / Lunch)
                         </td>
                       </tr>
                     ) : null;
