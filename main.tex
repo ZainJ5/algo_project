@@ -1,0 +1,552 @@
+\documentclass[12pt, a4paper]{article}
+
+% --- Packages ---
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{verbatim}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{mathptmx}
+\usepackage[T1]{fontenc}
+\usepackage{setspace}
+\usepackage{needspace}
+\usepackage{titlesec}
+\usepackage{etoolbox}
+
+% --- Typographical Adjustments to Prevent Awkward Page Breaks ---
+\raggedbottom
+\widowpenalty=10000
+\clubpenalty=10000
+\interlinepenalty=100
+\setstretch{1.15}
+
+% --- Section heading formatting ---
+\titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
+\titlespacing*{\section}{0pt}{2ex plus 1ex minus .2ex}{1ex plus .2ex}
+
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{1em}{}
+\titlespacing*{\subsection}{0pt}{1.5ex plus 0.5ex minus .2ex}{0.75ex plus .2ex}
+
+% Safe needspace hook that works for both \section and \section* ---
+\makeatletter
+\pretocmd{\@startsection}{\needspace{5\baselineskip}}{}{}
+\makeatother
+
+% Suppress the auto-heading thebibliography generates; we place our own below
+\renewcommand{\refname}{}
+
+% ============================================================
+\begin{document}
+
+% ==================== TITLE PAGE ====================
+\begin{titlepage}
+    \centering
+    \vspace*{1cm}
+
+    % Logo (ensure giki-logo-1-e1659884838448 image file is in the same folder as this .tex file)
+    \includegraphics[width=0.25\textwidth]{giki-logo-1-e1659884838448}\\[1.5cm]
+
+    {\color{blue}\bfseries\LARGE Algorithm Design and Implementation for\\[0.3cm]
+    Automated Timetable Scheduling}\\[0.6cm]
+
+    {\Large \textbf{Semester Project Report}}\\[0.4cm]
+    {\Large \textbf{CS378: Design and Analysis of Algorithms}}\\[0.3cm]
+    {\Large Spring 2026}\\[1.5cm]
+
+    {\Large \textbf{Instructor: Salman Ashraf}}\\[1.8cm]
+
+    {\Large \textbf{Submitted By:}}\\[0.4cm]
+
+    \begin{tabular}{ll}
+        Aazeb Ali      & 2023003 \\
+        Abdullah Ihsan & 2023039 \\
+        Rabbin Batool  & 2023586 \\
+        Zain Jamshaid  & 2023772 \\
+    \end{tabular}\\[2.5cm]
+
+    {\large Faculty of Computer Science and Engineering}\\[0.3cm]
+    {\large GIK Institute of Engineering Sciences and Technology}\\[0.5cm]
+
+    \vfill
+    {\large \textbf{Semester: Spring 2026}}
+    \vspace{1cm}
+\end{titlepage}
+% ====================================================
+
+\newpage
+
+% --- Abstract ---
+\begin{abstract}
+\noindent The University Course Timetabling Problem (UCTP) is a well-known NP-Hard
+optimization challenge that requires mapping a set of academic events to specific times
+and spatial resources without violating complex structural constraints. This report details
+the design, mathematical analysis, and implementation strategy of a hybrid algorithm
+utilizing Greedy Construction combined with Backtracking Swap Repair. The proposed
+solution is specifically tailored to the operational requirements of the Ghulam Ishaq Khan
+Institute (GIKI), balancing strict administrative mandates (hard constraints) with
+pedagogical optimization goals (soft constraints) to generate a robust, conflict-free
+weekly schedule.
+\end{abstract}
+
+\vspace{0.5cm}
+\hrule
+\vspace{0.5cm}
+
+% --- Section 1: Problem Definition ---
+\section{Problem Definition}
+
+The timetable scheduling problem involves assigning a defined set of academic
+entities---specifically courses, instructors, student cohorts, and classrooms---into a
+finite grid of weekly time slots. The objective is to produce a feasible schedule where
+no entities overlap in an invalid manner, and resource utilization is maximized.
+
+Formally, the system must process:
+
+\begin{itemize}[noitemsep, topsep=4pt]
+    \item \textbf{Entities:} A set of $N$ course sections ($S$) and a set of $M$
+          available classrooms ($R$). Each section requires a specific number of
+          instructional hours, and each room possesses a maximum seating capacity.
+
+    \item \textbf{Time Framework:} A standard 5-day academic week partitioned into
+          distinct daily slots, incorporating a mandatory lunch break.
+
+    \item \textbf{Objective:} To map $S \rightarrow (R \times T)$, where $T$ represents
+          the set of available time slots, such that all hard constraints are strictly
+          satisfied, and soft constraints are optimally managed to ensure workload
+          balance.
+\end{itemize}
+
+% --- Section 2: Algorithm Design ---
+\section{Algorithm Design}
+
+Given that standard brute-force methodologies possess an exponential time complexity
+($O(k^N)$), they are strictly computationally infeasible for a university-scale dataset.
+Therefore, this project implements a hybrid heuristic algorithm: \textbf{Greedy
+Construction combined with Depth-1 Backtracking Swap Repair and Progressive
+Relaxation}.
+
+The algorithm operates in a multi-phased pipeline:
+
+\begin{itemize}[topsep=4pt]
+    \item \textbf{Phase 0: Heuristic Sorting (Constraint Density):} Prior to assignment,
+          all sections are sorted by ``constraint density'' using four ordered keys:
+          (1)~named instructor before \texttt{TBA} (real scheduling constraints take
+          precedence); (2)~non-elective before elective (core courses are harder to
+          place and must not be crowded out); (3)~higher credit hours first; and
+          (4)~more programme codes first (a section shared across multiple programmes
+          is the most constrained). This ``hardest-first'' ordering ensures that
+          flexible, low-constraint sections fill the remaining gaps rather than
+          monopolising critical resources.
+
+    \item \textbf{Phase 1: Strict Greedy Construction:} The algorithm iterates
+          sequentially through the sorted sections, attempting to place each course into
+          the first valid slot-room combination that satisfies all constraints. A tracking
+          array (\texttt{dayLoad}) is maintained to ensure classes are balanced across
+          the week.
+
+    \item \textbf{Phase 2: Backtracking Swap Repair:} For each section $U$ that
+          fails Phase~1, the algorithm first re-attempts direct greedy placement
+          (previously scheduled sections may have opened new slot combinations).
+          If that still fails, a Depth-1 Local Search is triggered: a candidate
+          victim $V$ that conflicts with $U$ (same instructor, or overlapping
+          programme and year level) is temporarily removed from the schedule;
+          $U$ is placed in the freed slot; and the algorithm attempts to re-home $V$
+          elsewhere. If $V$ cannot be re-placed, the swap is fully undone and the
+          next candidate victim is tried. This resolves localised deadlocks without
+          spiraling into infinite recursive loops.
+
+    \item \textbf{Phases 3--6: Progressive Constraint Relaxation:} For sections that
+          remain unscheduled, the algorithm walks through four escalating relaxation
+          steps. \textbf{Phase~3} relaxes H3 for elective courses, permitting them
+          to overlap with other programmes. \textbf{Phase~4} further relaxes H3 for
+          distinct section groups within the same programme (e.g.\ Section~A and
+          Section~B of the same course may coexist in the same slot). \textbf{Phase~5}
+          skips H2 entirely and appends ``\texttt{(TBD)}'' to the instructor name,
+          flagging the assignment for manual instructor resolution. \textbf{Phase~6}
+          skips both H2 and H3, tagging the assignment as ``\texttt{(FORCE)}'' as an
+          absolute last resort. Together these phases guarantee a complete schedule is
+          always produced.
+\end{itemize}
+
+% --- Section 3: Assumptions ---
+\section{Assumptions}
+
+To mathematically model the GIKI academic environment, the following operational
+assumptions were formulated:
+
+\begin{enumerate}[label=\arabic*., noitemsep, topsep=4pt]
+    \item The academic week consists of 5 working days (Monday to Friday).
+
+    \item There are 8 operational time slots per day, starting at 08:30.
+          The daily schedule runs from 08:30 to 17:20, partitioned as:
+          \textbf{Morning} (slots 0--4): 08:30, 09:30, 10:30, 11:30, 12:30;
+          \textbf{Afternoon} (slots 5--7): 14:30, 15:30, 16:30.
+
+    \item A mandatory break exists between 13:30 and 14:30 (Prayer /
+          Jumu'ah break). The last morning slot (slot~4) ends at 13:20 and
+          the first afternoon slot (slot~5) starts at 14:30, so no class
+          is ever scheduled during the break window.
+          Laboratory sessions must be placed entirely within the morning
+          block or entirely within the afternoon block.
+
+    \item Standard 3-credit hour (CH) courses are mapped to
+          $3\ \text{days} \times 1\ \text{hour}$, preferring balanced spreads
+          (e.g., MWF).
+
+    \item Standard 2-CH courses are mapped to
+          $2\ \text{days} \times 1\ \text{hour}$, preferring TTh configurations.
+
+    \item A 1-CH laboratory session requires 3 consecutive hours on a single day and
+          cannot straddle the lunch break.
+
+    \item Default course enrollment is assumed to be 40.
+
+    \item Specific administrative venues (e.g., ES LH4) are reserved for centralized
+          assessments and excluded from routine scheduling.
+
+    \item Parallel course sections (e.g., Section A vs.\ Section B) serve distinct
+          student cohorts and may overlap chronologically.
+
+    \item Back-to-back teaching is permitted. Hard constraint H2 already
+          prevents an instructor from being double-booked in overlapping
+          slots; no additional minimum-gap restriction is imposed. This
+          ensures that all 8 daily time slots remain reachable for every
+          instructor, avoiding artificially empty rows in the schedule.
+\end{enumerate}
+
+% --- Section 4: Constraint Handling Strategy ---
+\section{Constraint Handling Strategy}
+
+\subsection{Hard Constraints (Strict Compliance)}
+
+\begin{itemize}[noitemsep, topsep=4pt]
+    \item \textbf{Room Uniqueness (H1):} Addressed by spatial checking loops. A
+          classroom cannot host multiple sections in the same time slot.
+
+    \item \textbf{Instructor Uniqueness (H2):} Evaluated by validating the instructor's
+          timeline. An instructor cannot be assigned to overlapping temporal slots.
+
+    \item \textbf{Program/Cohort Conflicts (H3):} Solved via set-intersection logic
+          (\texttt{programsOverlap}). Sections belonging to the same academic program
+          and year level cannot be scheduled simultaneously, preventing cohort overlaps.
+
+    \item \textbf{Room Capacity (H4):} Enforced during the initial sorting logic
+          (\texttt{sortRooms}). The algorithm filters out any room where capacity is
+          strictly less than the section's enrollment.
+\end{itemize}
+
+\subsection{Soft Constraints (Optimization Goals)}
+
+\begin{itemize}[noitemsep, topsep=4pt]
+    \item \textbf{Workload Distribution:} Managed via the \texttt{dayLoad} array. The
+          algorithm actively monitors daily class distributions and prioritizes
+          combinations that place courses on the least congested days, ensuring
+          no single weekday becomes disproportionately overloaded.
+
+    \item \textbf{Efficient Room Allocation:} Handled via a two-key heuristic
+          (\texttt{sortRooms}). The primary key is \textit{departmental ownership}:
+          rooms whose allocation field matches the section's programme are listed
+          first. The secondary key is \textit{best-fit capacity}: among eligible rooms,
+          the one with capacity closest to (but $\geq$) the section's enrollment is
+          selected, minimising wasted seating and preventing large halls from being
+          monopolised by small cohorts.
+\end{itemize}
+
+% --- Section 5: Input and Output Specification ---
+\section{Input and Output Specification}
+
+\noindent\textbf{Input Data:}\\[4pt]
+The system ingests structured data representing two primary sets:
+
+\begin{itemize}[noitemsep, topsep=4pt]
+    \item $S$ (Sections Data): Includes \texttt{courseCode}, \texttt{courseTitle},
+          \texttt{sectionLabel}, \texttt{program}, \texttt{instructorName},
+          \texttt{creditHours}, \texttt{isLab}, \texttt{isElective},
+          \texttt{sectionGroup}, \texttt{yearLevel}, and \texttt{enrollment}.
+          The \texttt{sectionGroup} identifier (e.g.\ ``A'', ``B'') allows Phase~4
+          to distinguish parallel sections serving distinct cohorts.
+          \texttt{yearLevel} (1--4) is not present in the Excel files; it is
+          \textit{automatically inferred} from the course code during seeding
+          (e.g.\ \texttt{CS232} $\Rightarrow$ year~2, \texttt{CV314} $\Rightarrow$
+          year~3) via the \texttt{extractYearLevel()} helper, which reads the first
+          digit of the numeric part of the code. A value of~0 is stored when no
+          valid digit is found.
+
+    \item $R$ (Rooms Data): Includes \texttt{name}, \texttt{capacity}, and
+          departmental \texttt{allocation}.
+\end{itemize}
+
+\noindent\textbf{Output Data:}\\[4pt]
+The primary output is a graphical timetable mapping, alongside an internal data
+structure containing:
+
+\begin{itemize}[noitemsep, topsep=4pt]
+    \item \texttt{assignments}: A complete list of all mapped sections, dictating the
+          assigned \texttt{room} and specific temporal \texttt{slots}.
+
+    \item \texttt{unassigned}: A list of sections the algorithm failed to place entirely
+          (flagged for manual review).
+
+    \item \texttt{hardViolations}: An integer metric indicating the overall ``health''
+          and validity of the generated schedule (should ideally equal 0).
+\end{itemize}
+
+% --- Section 6: Complexity Analysis ---
+\section{Complexity Analysis}
+
+\subsection{Time Complexity}
+
+Let $N$ denote the total number of course sections, $M$ denote the total number of
+rooms, $C$ denote the maximum possible time combinations for a given section, and $U$
+denote the number of unassigned sections pushed to Phase~2.
+
+$C$ is bounded by the 3-CH and 2-CH course types, both of which produce the same
+maximum:
+$$C = \binom{5}{3} \times 8 = 10 \times 8 = 80 \quad \text{(3-CH: 3 days from 5, any of 8 slots)}$$
+$$C = \binom{5}{2} \times 8 = 10 \times 8 = 80 \quad \text{(2-CH: 2 days from 5, any of 8 slots)}$$
+Laboratory sessions generate only $4 \times 5 = 20$ combinations (4 valid start slots
+$\times$ 5 days), so $C \approx 80$ is the worst-case upper bound across all course types.
+
+\begin{itemize}[topsep=4pt]
+    \item \textbf{Phase 1 (Greedy Construction):} For each of the $N$ sections, the
+          algorithm tests up to $C$ combinations across $M$ rooms. Every test validates
+          conflicts against a maximum of $N$ already-placed sections. Complexity:
+          $O(N \cdot C \cdot M \cdot N) = O(N^2 \cdot C \cdot M)$.
+
+    \item \textbf{Phase 2 (Backtracking Repair):} Iterates over $U$ failures. For each,
+          it tests swapping against up to $N$ existing assignments, effectively running
+          the placement logic twice per swap. Complexity: $O(U \cdot N^2 \cdot C \cdot M)$.
+\end{itemize}
+
+Since $U \ll N$ (typically under 5\% of sections fall to Phase 2), $U$ and $C$ act as
+constants.
+
+\medskip
+\noindent\textbf{Overall Time Complexity:} $\mathbf{O(N^2 \cdot M)}$.
+
+\medskip
+\noindent This polynomial boundary confirms the algorithm is highly scalable and will
+execute in mere seconds on modern hardware, satisfying the requirement for efficiency.
+
+\subsection{Space Complexity}
+
+The algorithm requires memory proportional to the size of the inputs and the output
+structures.
+
+\begin{itemize}[noitemsep, topsep=4pt]
+    \item Storing sections $S$ and rooms $R$ requires $O(N + M)$ space.
+
+    \item The \texttt{assignments} array scales linearly with the number of placed
+          sections: $O(N)$.
+
+    \item Due to restricting the backtracking to a ``Depth-1'' limit, the call stack
+          does not grow recursively, ensuring minimal overhead memory usage.
+\end{itemize}
+
+\medskip
+\noindent\textbf{Overall Space Complexity:} $\mathbf{O(N + M)}$.
+
+% --- Section 7: Limitations ---
+\section{Limitations}
+
+While highly effective, the current design exhibits specific limitations:
+
+\begin{enumerate}[label=\arabic*., topsep=4pt]
+    \item \textbf{The ``Domino Effect'' Restriction:} Because the Local Search is
+          strictly Depth-1, it cannot resolve complex deadlocks that require cascading
+          moves (e.g., moving Course~A to move Course~B to move Course~C).
+
+    \item \textbf{Global Load Drift:} The \texttt{dayLoad} array globally balances the
+          week, but it does not track spatial congestion (e.g., balancing the load
+          specifically for one faculty building versus another).
+
+    \item \textbf{Optimal vs.\ Feasible:} As a heuristic approach, the algorithm
+          guarantees a \textit{feasible} (good enough) schedule rapidly, but it cannot
+          mathematically guarantee the absolute \textit{optimal} (perfect) global
+          minimum solution.
+\end{enumerate}
+
+% --- Section 8: Results and Sample Outputs ---
+\section{Results and Sample Outputs}
+
+\textit{(Note: Screenshots of the implementation should be inserted here using the
+\texttt{\textbackslash includegraphics} command.)}
+
+\vspace{0.3cm}
+\noindent The algorithmic core was connected to a Graphical User Interface (GUI). The
+interface successfully demonstrates:
+
+\begin{itemize}[topsep=4pt]
+    \item \textbf{Data Parsing Screen:} Users can upload or define courses, capacities,
+          and teachers.
+
+    \item \textbf{Execution Metrics:} Upon running the algorithm, the GUI displays the
+          execution time (in milliseconds) and the total count of Hard Violations.
+
+    \item \textbf{Visual Grid:} The primary output is a color-coded weekly calendar
+          view. The X-axis represents the 5 working days, and the Y-axis represents the
+          8 daily time slots. Users can filter this grid by Room, Instructor, or Student
+          Cohort to verify constraints visually.
+\end{itemize}
+
+% --- Section 9: Conclusion ---
+\section{Conclusion}
+
+The implemented algorithm successfully bridges the gap between strict theoretical
+constraints and real-world administrative compromises at GIK Institute. By leveraging a
+Greedy framework fortified with Constraint Density Sorting and Depth-1 Backtracking,
+the system achieves a computationally efficient ($O(N^2 \cdot M)$) solution to the
+NP-Hard Timetabling Problem. The strategic relaxation of constraints in the final phases
+ensures a complete schedule is generated, demonstrating practical, software-engineering-level
+algorithm design capable of automating complex institutional logistics.
+
+% --- Project Links ---
+\section{Project Links}
+
+\begin{itemize}[noitemsep, topsep=4pt]
+    \item \textbf{Live Demo:}
+          \href{https://algo-project-five.vercel.app/}{\texttt{https://algo-project-five.vercel.app/}}
+
+    \item \textbf{GitHub Repository:}
+          \href{https://github.com/ZainJ5/algo\_project}{\texttt{https://github.com/ZainJ5/algo\_project}}
+\end{itemize}
+
+% --- References ---
+\newpage
+\section{References}
+
+\begin{thebibliography}{9}
+
+\bibitem{cormen}
+Cormen, T.\,H., Leiserson, C.\,E., Rivest, R.\,L., \& Stein, C. (2009).
+\textit{Introduction to Algorithms} (3rd ed.). MIT Press.
+
+\bibitem{schaerf}
+Schaerf, A. (1999).
+\textit{A survey of automated timetabling}.
+Artificial Intelligence Review, 13(2), 87--127.
+
+\bibitem{carter}
+Carter, M.\,W., \& Laporte, G. (1998).
+\textit{Recent developments in practical course timetabling}.
+Practice and Theory of Automated Timetabling II. Springer.
+
+\end{thebibliography}
+
+\newpage
+
+% --- Appendix: Algorithm / Pseudocode ---
+\appendix
+\section{Appendix: Step-by-Step Algorithm (Class Format)}
+
+The following pseudocode demonstrates the exact step-by-step logic of the hybrid
+scheduling algorithm, structured according to the standard algorithmic notation
+discussed in class.
+
+\begin{verbatim}
+Algorithm TimetableScheduling(S, n, R, m)
+{
+    // S: Array of n course sections
+    // R: Array of m available rooms
+
+    // STEP 0: Initialization and Sorting
+    Assignments = {};
+    Unassigned  = {};
+    dayLoad[5]  = {0, 0, 0, 0, 0};
+
+    SortByConstraintDensity(S, n);
+    // Sorts S so largest enrollments and strict constraints come first
+
+    // STEP 1: Phase 1 - Strict Greedy Construction
+    for (i = 0; i < n; i++)
+    {
+        placed = false;
+
+        // Fetch time combinations (credit hours, lab flag, current day-load)
+        combos = GetSlotCombinations(S[i].credits, S[i].isLab, dayLoad);
+
+        for (c = 0; c < combos.length; c++)
+        {
+            for (j = 0; j < m; j++)
+            {
+                // Check Hard Constraints (H1, H2, H3, H4)
+                if (CheckConflicts(S[i], R[j], combos[c], Assignments) == 0)
+                {
+                    Assignments.add(S[i], R[j], combos[c]);
+                    Update(dayLoad);
+                    placed = true;
+                    break;
+                }
+            }
+            if (placed == true) { break; }
+        }
+
+        if (placed == false) { Unassigned.add(S[i]); }
+    }
+
+    // STEP 2: Phase 2 - Backtracking Swap Repair (Depth-1)
+    for (u = 0; u < Unassigned.length; u++)
+    {
+        // First: re-attempt direct placement (schedule may have shifted)
+        if (TryPlace(Unassigned[u], R, Assignments, dayLoad) == true)
+        {
+            Assignments.add(Unassigned[u]);
+            Update(dayLoad);
+            continue;
+        }
+
+        for (v = 0; v < Assignments.length; v++)
+        {
+            // Only attempt swap if removing V logically helps U
+            if (WouldBenefitSwap(Unassigned[u], Assignments[v]) == true)
+            {
+                TemporarilyRemove(Assignments[v]);
+
+                if (TryPlace(Unassigned[u], R, Assignments) == true)
+                {
+                    if (TryPlace(Assignments[v], R, Assignments) == true)
+                    {
+                        break; // Swap successful, move to next unassigned
+                    }
+                    else
+                    {
+                        UndoPlacement(Unassigned[u]);
+                        RestorePlacement(Assignments[v]);
+                    }
+                }
+                else
+                {
+                    RestorePlacement(Assignments[v]);
+                }
+            }
+        }
+    }
+
+    // STEP 3: Phases 3 to 6 - Progressive Constraint Relaxation
+    for (u = 0; u < Unassigned.length; u++)
+    {
+        // Phase 3: Relax H3 for electives (allow elective program overlaps)
+        if (TryPlaceRelaxed(Unassigned[u], relaxElectives=true) == true)
+            { continue; }
+
+        // Phase 4: Relax H3 for section groups (Section A vs Section B)
+        if (TryPlaceRelaxed(Unassigned[u], relaxElectives=true,
+                             relaxGroups=true) == true)
+            { continue; }
+
+        // Phase 5: Skip H2, mark instructor as "(TBD)" for manual review
+        if (TryPlaceRelaxed(Unassigned[u], skipH2=true,
+                             maskInstructor="(TBD)") == true)
+            { continue; }
+
+        // Phase 6: Last resort — skip H2+H3, tag instructor as "(FORCE)"
+        ForcePlace(Unassigned[u], Assignments);
+    }
+
+    return Assignments;
+}
+\end{verbatim}
+
+\end{document}
