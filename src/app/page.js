@@ -74,6 +74,13 @@ function IconDownload() {
     </svg>
   );
 }
+function IconPlus() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>
+    </svg>
+  );
+}
 function IconFilter() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -136,6 +143,15 @@ export default function TimetablePage() {
   const [generating, setGenerating] = useState(false);
   const [msg, setMsg] = useState('');
   const [view, setView] = useState('grid');
+  
+  // Add Section Modal State
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newSec, setNewSec] = useState({
+    courseCode: '', courseTitle: '', creditHours: 3, sectionLabel: '',
+    program: '', instructorName: '', isLab: false, isElective: false,
+    enrollment: 40, yearLevel: 1, sectionGroup: ''
+  });
+  const [addingSec, setAddingSec] = useState(false);
 
   // Auto-load the list of saved schedules on page open
   useEffect(() => { loadList(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -197,6 +213,33 @@ export default function TimetablePage() {
     }
   }
 
+  async function handleAddSection(e) {
+    e.preventDefault();
+    setAddingSec(true);
+    setMsg('');
+    try {
+      const r = await fetch('/api/section', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSec)
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || 'Failed to add section');
+      setMsg('Section added successfully! Generate a new schedule to include it.');
+      setShowAddModal(false);
+      setNewSec({
+        courseCode: '', courseTitle: '', creditHours: 3, sectionLabel: '',
+        program: '', instructorName: '', isLab: false, isElective: false,
+        enrollment: 40, yearLevel: 1, sectionGroup: ''
+      });
+    } catch (err) {
+      console.error(err);
+      setMsg('Error adding section: ' + err.message);
+    } finally {
+      setAddingSec(false);
+    }
+  }
+
   const grid = buildGrid(assignments);
   const scheduled   = assignments.filter(a => a.roomName !== 'UNSCHEDULED').length;
   const unscheduled = assignments.filter(a => a.roomName === 'UNSCHEDULED').length;
@@ -236,6 +279,18 @@ export default function TimetablePage() {
 
           {/* Right actions */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <a
+              href="/simulator"
+              style={{
+                padding: '7px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 500,
+                color: '#94a3b8', textDecoration: 'none',
+                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'rgba(255,255,255,0.04)',
+                display: 'flex', alignItems: 'center', gap: '6px',
+              }}
+            >
+              🔬 Simulator
+            </a>
             {meta && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
@@ -326,15 +381,23 @@ export default function TimetablePage() {
             </div>
           </div>
 
-          {/* View toggle — pushed to the right */}
-          <div className="md:ml-auto flex gap-0.5 p-1 bg-slate-100 rounded-lg self-start sm:self-auto w-full sm:w-auto mt-1 md:mt-0">
-            {[['grid', 'Grid View'], ['list', 'List View']].map(([v, label]) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`flex-1 sm:flex-none px-3.5 py-1.5 rounded-md text-[12px] font-medium border-none cursor-pointer transition-all duration-150 ${view === v ? 'bg-white text-slate-900 shadow-sm' : 'bg-transparent text-slate-500'}`}
-              >{label}</button>
-            ))}
+          {/* View toggle & Add Section — pushed to the right */}
+          <div className="md:ml-auto flex gap-2 items-center w-full sm:w-auto mt-1 md:mt-0">
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 border-none px-3.5 py-1.5 rounded-lg text-[13px] font-medium cursor-pointer flex items-center justify-center gap-1.5 transition-colors"
+            >
+              <IconPlus /> Add Section
+            </button>
+            <div className="flex gap-0.5 p-1 bg-slate-100 rounded-lg shrink-0">
+              {[['grid', 'Grid View'], ['list', 'List View']].map(([v, label]) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`flex-1 sm:flex-none px-3.5 py-1.5 rounded-md text-[12px] font-medium border-none cursor-pointer transition-all duration-150 ${view === v ? 'bg-white text-slate-900 shadow-sm' : 'bg-transparent text-slate-500'}`}
+                >{label}</button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -542,6 +605,82 @@ export default function TimetablePage() {
           </div>
         )}
       </main>
+
+      {/* ═══ ADD SECTION MODAL ═══ */}
+      {showAddModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="font-semibold text-slate-800 m-0 text-[15px]">Add New Section</h3>
+              <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-slate-600 bg-transparent border-none cursor-pointer text-xl leading-none">&times;</button>
+            </div>
+            
+            <form onSubmit={handleAddSection} className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Course Code *</label>
+                  <input required placeholder="e.g. CS201" value={newSec.courseCode} onChange={e=>setNewSec({...newSec, courseCode: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-slate-50 focus:bg-white transition-colors outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Section Label</label>
+                  <input placeholder="e.g. A" value={newSec.sectionLabel} onChange={e=>setNewSec({...newSec, sectionLabel: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-slate-50 focus:bg-white transition-colors outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[12px] font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Course Title *</label>
+                <input required placeholder="e.g. Data Structures" value={newSec.courseTitle} onChange={e=>setNewSec({...newSec, courseTitle: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-slate-50 focus:bg-white transition-colors outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Instructor</label>
+                  <input placeholder="e.g. Dr. Ali" value={newSec.instructorName} onChange={e=>setNewSec({...newSec, instructorName: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-slate-50 focus:bg-white transition-colors outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Program</label>
+                  <input placeholder="e.g. BCS" value={newSec.program} onChange={e=>setNewSec({...newSec, program: e.target.value})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-slate-50 focus:bg-white transition-colors outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Cr. Hours *</label>
+                  <input required type="number" min="1" max="4" value={newSec.creditHours} onChange={e=>setNewSec({...newSec, creditHours: parseInt(e.target.value)})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-slate-50 focus:bg-white transition-colors outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Enrollment</label>
+                  <input type="number" min="1" value={newSec.enrollment} onChange={e=>setNewSec({...newSec, enrollment: parseInt(e.target.value)})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-slate-50 focus:bg-white transition-colors outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
+                </div>
+                <div>
+                  <label className="block text-[12px] font-medium text-slate-500 mb-1.5 uppercase tracking-wider">Year Level</label>
+                  <input type="number" min="1" max="4" value={newSec.yearLevel} onChange={e=>setNewSec({...newSec, yearLevel: parseInt(e.target.value)})} className="w-full border border-slate-200 rounded-lg px-3 py-2 text-[13px] bg-slate-50 focus:bg-white transition-colors outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400" />
+                </div>
+              </div>
+
+              <div className="flex gap-4 pt-2">
+                <label className="flex items-center gap-2 text-[13px] text-slate-700 cursor-pointer">
+                  <input type="checkbox" checked={newSec.isLab} onChange={e=>setNewSec({...newSec, isLab: e.target.checked})} className="rounded text-blue-500 w-4 h-4" />
+                  Is Lab Session
+                </label>
+                <label className="flex items-center gap-2 text-[13px] text-slate-700 cursor-pointer">
+                  <input type="checkbox" checked={newSec.isElective} onChange={e=>setNewSec({...newSec, isElective: e.target.checked})} className="rounded text-blue-500 w-4 h-4" />
+                  Is Elective
+                </label>
+              </div>
+
+              <div className="pt-4 mt-2 border-t border-slate-100 flex justify-end gap-2 shrink-0">
+                <button type="button" onClick={() => setShowAddModal(false)} className="px-4 py-2 text-[13px] font-medium text-slate-600 hover:bg-slate-100 rounded-lg transition-colors border-none bg-transparent cursor-pointer">
+                  Cancel
+                </button>
+                <button type="submit" disabled={addingSec} className="px-4 py-2 text-[13px] font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors border-none cursor-pointer flex items-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed">
+                  {addingSec ? 'Saving...' : 'Save Section'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ═══ FOOTER ═══ */}
       <footer style={{ borderTop: '1px solid #e2e8f0', marginTop: '32px', padding: '16px 24px' }}>
