@@ -76,9 +76,9 @@ export const BREAK_AFTER_SLOT = 4;
 // A positive MIN_GAP causes the greedy algorithm to skip odd-numbered slots
 // systematically (e.g. instructor at slot 0 jumps to slot 3, leaving slots
 // 1 and 2 unreachable for that instructor), producing empty rows in the
-// timetable even when sections are available.  Setting MIN_GAP = 0 ensures
-// all 8 slots are freely available to the scheduler.
-const DEFAULT_MIN_GAP = 0;
+// timetable even when sections are available. Setting MIN_GAP = 1 enforces
+// that an instructor must have at least 1 hour of gap between different classes.
+const DEFAULT_MIN_GAP = 1;
 
 // ── Day-load tracker (keeps schedule balanced across days) ────────────────
 
